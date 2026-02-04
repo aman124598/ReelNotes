@@ -1,0 +1,44 @@
+# Dependencies
+node_modules/
+
+# Git
+.git/
+
+# Expo
+.expo/
+.expo-shared/
+dist/
+web-build/
+
+# Environment files
+.env
+.env.local
+.env*.local
+
+# Build artifacts
+*.log
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Native builds (generated during cloud build)
+ios/
+android/
+
+# Test coverage
+coverage/
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
