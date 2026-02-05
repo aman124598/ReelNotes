@@ -1,25 +1,14 @@
-import React, { useEffect } from 'react';
+import React from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { NoteDetailScreen } from './src/screens/NoteDetailScreen';
 import { AddNoteScreen } from './src/screens/AddNoteScreen';
-import { initDatabase } from './src/db';
 
 const Stack = createStackNavigator();
 
 export default function App() {
-  useEffect(() => {
-    // Initialize database on app startup
-    try {
-      initDatabase();
-      console.log('Database initialized successfully');
-    } catch (error) {
-      console.error('Failed to initialize database:', error);
-    }
-  }, []);
-
   return (
     <NavigationContainer>
       <StatusBar style="light" />

@@ -9,7 +9,7 @@ import {
   Alert,
 } from 'react-native';
 import { Button } from '../components/Button';
-import { getNoteById, updateNote, deleteNote } from '../db';
+import { getNoteById, updateNote, deleteNote } from '../services/supabase';
 import { Note } from '../types';
 import { theme } from '../theme';
 
@@ -18,10 +18,12 @@ export const NoteDetailScreen = ({ route, navigation }: any) => {
   const [note, setNote] = useState<Note | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [editedText, setEditedText] = useState('');
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const loadNote = () => {
-      const loadedNote = getNoteById(noteId);
+    const loadNote = async () => {
+      setLoading(true);
+      const loadedNote = await getNoteById(noteId);
       if (loadedNote) {
         setNote(loadedNote);
         setEditedText(loadedNote.structured_text);
@@ -29,18 +31,23 @@ export const NoteDetailScreen = ({ route, navigation }: any) => {
         Alert.alert('Error', 'Note not found');
         navigation.goBack();
       }
+      setLoading(false);
     };
 
     loadNote();
   }, [noteId]);
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!note) return;
 
-    updateNote(note.id, { structured_text: editedText });
-    setNote({ ...note, structured_text: editedText });
-    setIsEditing(false);
-    Alert.alert('Success', 'Note updated!');
+    const success = await updateNote(note.id, { structured_text: editedText });
+    if (success) {
+      setNote({ ...note, structured_text: editedText });
+      setIsEditing(false);
+      Alert.alert('Success', 'Note updated!');
+    } else {
+      Alert.alert('Error', 'Failed to update note');
+    }
   };
 
   const handleDelete = () => {
@@ -52,10 +59,14 @@ export const NoteDetailScreen = ({ route, navigation }: any) => {
         {
           text: 'Delete',
           style: 'destructive',
-          onPress: () => {
+          onPress: async () => {
             if (note) {
-              deleteNote(note.id);
-              navigation.goBack();
+              const success = await deleteNote(note.id);
+              if (success) {
+                navigation.goBack();
+              } else {
+                Alert.alert('Error', 'Failed to delete note');
+              }
             }
           },
         },
@@ -63,7 +74,7 @@ export const NoteDetailScreen = ({ route, navigation }: any) => {
     );
   };
 
-  if (!note) {
+  if (loading || !note) {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.loadingContainer}>

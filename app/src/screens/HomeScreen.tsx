@@ -4,19 +4,29 @@ import { useFocusEffect } from '@react-navigation/native';
 import { NoteCard } from '../components/NoteCard';
 import { SearchBar } from '../components/SearchBar';
 import { Button } from '../components/Button';
-import { getAllNotes, searchNotes, deleteNote } from '../db';
+import { getAllNotes, searchNotes, deleteNote } from '../services/supabase';
 import { Note } from '../types';
 import { theme } from '../theme';
 
 export const HomeScreen = ({ navigation }: any) => {
   const [notes, setNotes] = useState<Note[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const loadNotes = () => {
-    if (searchQuery.trim()) {
-      setNotes(searchNotes(searchQuery));
-    } else {
-      setNotes(getAllNotes());
+  const loadNotes = async () => {
+    setLoading(true);
+    try {
+      if (searchQuery.trim()) {
+        const results = await searchNotes(searchQuery);
+        setNotes(results);
+      } else {
+        const results = await getAllNotes();
+        setNotes(results);
+      }
+    } catch (error) {
+      console.error('Error loading notes:', error);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -35,9 +45,13 @@ export const HomeScreen = ({ navigation }: any) => {
         {
           text: 'Delete',
           style: 'destructive',
-          onPress: () => {
-            deleteNote(id);
-            loadNotes();
+          onPress: async () => {
+            const success = await deleteNote(id);
+            if (success) {
+              loadNotes();
+            } else {
+              Alert.alert('Error', 'Failed to delete note');
+            }
           },
         },
       ]

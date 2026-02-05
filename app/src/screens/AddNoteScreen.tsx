@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { Button } from '../components/Button';
-import { addNote } from '../db';
+import { addNote } from '../services/supabase';
 import { extractReelContent } from '../services/supabase';
 import { formatWithGroq } from '../services/groq';
 import { theme } from '../theme';
@@ -88,13 +88,13 @@ export const AddNoteScreen = ({ navigation }: any) => {
     }
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!extractedData) {
       Alert.alert('Error', 'Please extract content first');
       return;
     }
 
-    const noteId = addNote({
+    const noteId = await addNote({
       url: url.trim(),
       title: extractedData.title,
       content_type: extractedData.contentType,
@@ -103,16 +103,20 @@ export const AddNoteScreen = ({ navigation }: any) => {
       status: 'ready',
     });
 
-    Alert.alert('Success', 'Note saved!', [
-      {
-        text: 'OK',
-        onPress: () => navigation.navigate('NoteDetail', { noteId }),
-      },
-    ]);
+    if (noteId) {
+      Alert.alert('Success', 'Note saved!', [
+        {
+          text: 'OK',
+          onPress: () => navigation.navigate('NoteDetail', { noteId }),
+        },
+      ]);
+    } else {
+      Alert.alert('Error', 'Failed to save note');
+    }
   };
 
-  const handleManualCreate = () => {
-    const noteId = addNote({
+  const handleManualCreate = async () => {
+    const noteId = await addNote({
       url: url.trim() || 'Manual Entry',
       title: 'Untitled Note',
       content_type: 'Other',
@@ -120,7 +124,11 @@ export const AddNoteScreen = ({ navigation }: any) => {
       status: 'draft',
     });
 
-    navigation.navigate('NoteDetail', { noteId });
+    if (noteId) {
+      navigation.navigate('NoteDetail', { noteId });
+    } else {
+      Alert.alert('Error', 'Failed to create note');
+    }
   };
 
   return (
