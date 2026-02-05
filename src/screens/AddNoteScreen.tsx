@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   TextInput,
   SafeAreaView,
   Alert,
+  Animated,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { Button } from '../components/Button';
@@ -18,12 +19,21 @@ import { theme } from '../theme';
 export const AddNoteScreen = ({ navigation }: any) => {
   const [url, setUrl] = useState('');
   const [loading, setLoading] = useState(false);
+  const fadeAnim = useRef(new Animated.Value(0)).current;
   const [extractedData, setExtractedData] = useState<{
     title: string;
     contentType: string;
     structuredText: string;
     transcript?: string;
   } | null>(null);
+
+  useEffect(() => {
+    Animated.timing(fadeAnim, {
+      toValue: 1,
+      duration: 450,
+      useNativeDriver: true,
+    }).start();
+  }, [fadeAnim]);
 
   const handlePasteFromClipboard = async () => {
     const text = await Clipboard.getStringAsync();
@@ -133,74 +143,89 @@ export const AddNoteScreen = ({ navigation }: any) => {
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <Button
-          title="← Back"
-          onPress={() => navigation.goBack()}
-          variant="secondary"
-          style={styles.backButton}
-        />
-        <Text style={styles.headerTitle}>New Note</Text>
-        <View style={{ width: 80 }} />
+      <View pointerEvents="none" style={styles.background}>
+        <View style={styles.glowTop} />
+        <View style={styles.glowBottom} />
       </View>
 
-      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-        <Text style={styles.label}>Instagram Reel URL</Text>
-        <View style={styles.inputRow}>
-          <TextInput
-            style={styles.input}
-            value={url}
-            onChangeText={setUrl}
-            placeholder="https://www.instagram.com/reel/..."
-            placeholderTextColor={theme.colors.textMuted}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
+      <Animated.View style={[styles.contentWrapper, { opacity: fadeAnim }]}>
+        <View style={styles.header}>
           <Button
-            title="📋"
-            onPress={handlePasteFromClipboard}
-            variant="secondary"
-            style={styles.pasteButton}
+            title="Back"
+            onPress={() => navigation.goBack()}
+            variant="ghost"
+            style={styles.backButton}
           />
-        </View>
-
-        <Button
-          title="Extract Content"
-          onPress={handleExtract}
-          loading={loading}
-          style={styles.extractButton}
-        />
-
-        {extractedData && (
-          <View style={styles.previewSection}>
-            <Text style={styles.previewLabel}>Preview</Text>
-
-            <View style={styles.previewCard}>
-              <Text style={styles.previewTitle}>{extractedData.title}</Text>
-              <Text style={styles.previewContentType}>{extractedData.contentType}</Text>
-              <Text style={styles.previewText} numberOfLines={10}>
-                {extractedData.structuredText}
-              </Text>
-            </View>
-
-            <Button
-              title="Save Note"
-              onPress={handleSave}
-              style={styles.saveButton}
-            />
+          <View style={styles.headerText}>
+            <Text style={styles.headerTitle}>New Note</Text>
+            <Text style={styles.headerSubtitle}>Extract a reel and save the highlights.</Text>
           </View>
-        )}
-
-        <View style={styles.divider}>
-          <Text style={styles.dividerText}>OR</Text>
+          <View style={styles.headerSpacer} />
         </View>
 
-        <Button
-          title="Create Manual Note"
-          onPress={handleManualCreate}
-          variant="secondary"
-        />
-      </ScrollView>
+        <ScrollView
+          style={styles.content}
+          contentContainerStyle={styles.contentContainer}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.section}>
+            <Text style={styles.label}>Instagram Link</Text>
+            <View style={styles.inputRow}>
+              <TextInput
+                style={styles.input}
+                value={url}
+                onChangeText={setUrl}
+                placeholder="https://www.instagram.com/reel/..."
+                placeholderTextColor={theme.colors.textMuted}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              <Button
+                title="Paste"
+                onPress={handlePasteFromClipboard}
+                variant="secondary"
+                style={styles.pasteButton}
+              />
+            </View>
+            <Text style={styles.helperText}>We support reels, posts, and IGTV links.</Text>
+          </View>
+
+          <Button
+            title={loading ? 'Extracting...' : 'Extract Content'}
+            onPress={handleExtract}
+            loading={loading}
+            style={styles.extractButton}
+          />
+
+          {extractedData && (
+            <View style={styles.previewSection}>
+              <Text style={styles.previewLabel}>Preview</Text>
+
+              <View style={styles.previewCard}>
+                <Text style={styles.previewTitle}>{extractedData.title}</Text>
+                <Text style={styles.previewContentType}>{extractedData.contentType}</Text>
+                <Text style={styles.previewText} numberOfLines={10}>
+                  {extractedData.structuredText}
+                </Text>
+              </View>
+
+              <Button title="Save Note" onPress={handleSave} style={styles.saveButton} />
+            </View>
+          )}
+
+          <View style={styles.divider}>
+            <View style={styles.dividerLine} />
+            <Text style={styles.dividerText}>OR</Text>
+            <View style={styles.dividerLine} />
+          </View>
+
+          <Button
+            title="Create Manual Note"
+            onPress={handleManualCreate}
+            variant="secondary"
+          />
+        </ScrollView>
+      </Animated.View>
     </SafeAreaView>
   );
 };
@@ -210,31 +235,76 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: theme.colors.background,
   },
+  background: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  glowTop: {
+    position: 'absolute',
+    width: 300,
+    height: 300,
+    borderRadius: 150,
+    backgroundColor: theme.colors.primarySoft,
+    top: -160,
+    right: -120,
+    opacity: 0.9,
+  },
+  glowBottom: {
+    position: 'absolute',
+    width: 360,
+    height: 360,
+    borderRadius: 180,
+    backgroundColor: theme.colors.accentSoft,
+    bottom: -200,
+    left: -140,
+    opacity: 0.8,
+  },
   header: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: theme.spacing.lg,
-    paddingVertical: theme.spacing.md,
+    paddingTop: theme.spacing.lg,
+    paddingBottom: theme.spacing.md,
   },
   backButton: {
     paddingHorizontal: theme.spacing.md,
-    minHeight: 40,
-    width: 80,
+    minHeight: 36,
+  },
+  headerText: {
+    flex: 1,
+    marginLeft: theme.spacing.sm,
+  },
+  headerSpacer: {
+    width: 40,
   },
   headerTitle: {
-    ...theme.typography.heading,
+    ...theme.typography.title,
     color: theme.colors.text,
+  },
+  headerSubtitle: {
+    ...theme.typography.body,
+    color: theme.colors.textMuted,
+    marginTop: 2,
   },
   content: {
     flex: 1,
+  },
+  contentWrapper: {
+    flex: 1,
+  },
+  contentContainer: {
     paddingHorizontal: theme.spacing.lg,
+    paddingBottom: theme.spacing.xxl,
+  },
+  section: {
+    marginBottom: theme.spacing.md,
   },
   label: {
     ...theme.typography.body,
     color: theme.colors.text,
     marginBottom: theme.spacing.sm,
-    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
   },
   inputRow: {
     flexDirection: 'row',
@@ -242,18 +312,22 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
-    backgroundColor: theme.colors.card,
-    borderRadius: theme.borderRadius.sm,
+    backgroundColor: theme.colors.cardElevated,
+    borderRadius: theme.borderRadius.lg,
     padding: theme.spacing.md,
     color: theme.colors.text,
-    fontSize: 16,
+    ...theme.typography.body,
     borderWidth: 1,
-    borderColor: theme.colors.border,
+    borderColor: theme.colors.borderSoft,
   },
   pasteButton: {
     marginLeft: theme.spacing.sm,
-    width: 60,
-    paddingHorizontal: 0,
+    paddingHorizontal: theme.spacing.md,
+    minWidth: 80,
+  },
+  helperText: {
+    ...theme.typography.caption,
+    color: theme.colors.textSubtle,
   },
   extractButton: {
     marginBottom: theme.spacing.lg,
@@ -265,15 +339,17 @@ const styles = StyleSheet.create({
     ...theme.typography.body,
     color: theme.colors.text,
     marginBottom: theme.spacing.sm,
-    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
   },
   previewCard: {
-    backgroundColor: theme.colors.card,
-    borderRadius: theme.borderRadius.md,
-    padding: theme.spacing.md,
+    backgroundColor: theme.colors.cardElevated,
+    borderRadius: theme.borderRadius.lg,
+    padding: theme.spacing.lg,
     marginBottom: theme.spacing.md,
     borderWidth: 1,
-    borderColor: theme.colors.border,
+    borderColor: theme.colors.borderSoft,
+    ...theme.shadows.soft,
   },
   previewTitle: {
     ...theme.typography.heading,
@@ -282,8 +358,10 @@ const styles = StyleSheet.create({
   },
   previewContentType: {
     ...theme.typography.caption,
-    color: theme.colors.primary,
+    color: theme.colors.accent,
     marginBottom: theme.spacing.sm,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
   },
   previewText: {
     ...theme.typography.body,
@@ -297,11 +375,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginVertical: theme.spacing.lg,
   },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: theme.colors.borderSoft,
+    opacity: 0.7,
+  },
   dividerText: {
-    color: theme.colors.textMuted,
+    ...theme.typography.caption,
+    color: theme.colors.textSubtle,
     paddingHorizontal: theme.spacing.md,
-    backgroundColor: theme.colors.background,
-    fontSize: 14,
-    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 1.2,
   },
 });

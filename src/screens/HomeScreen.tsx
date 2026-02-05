@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, FlatList, Alert, SafeAreaView } from 'react-native';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, FlatList, Alert, SafeAreaView, Animated } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { NoteCard } from '../components/NoteCard';
 import { SearchBar } from '../components/SearchBar';
@@ -12,6 +12,15 @@ export const HomeScreen = ({ navigation }: any) => {
   const [notes, setNotes] = useState<Note[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(false);
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.timing(fadeAnim, {
+      toValue: 1,
+      duration: 450,
+      useNativeDriver: true,
+    }).start();
+  }, [fadeAnim]);
 
   const loadNotes = async () => {
     setLoading(true);
@@ -58,30 +67,17 @@ export const HomeScreen = ({ navigation }: any) => {
     );
   };
 
+  const noteCount = notes.length;
+
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>📱 ReelNotes</Text>
-        <Button
-          title="+ New"
-          onPress={() => navigation.navigate('AddNote')}
-          style={styles.newButton}
-        />
+      <View pointerEvents="none" style={styles.background}>
+        <View style={styles.glowTop} />
+        <View style={styles.glowBottom} />
+        <View style={styles.ring} />
       </View>
 
-      <SearchBar
-        value={searchQuery}
-        onChangeText={setSearchQuery}
-      />
-
-      {notes.length === 0 ? (
-        <View style={styles.emptyState}>
-          <Text style={styles.emptyText}>No notes yet</Text>
-          <Text style={styles.emptySubtext}>
-            Tap "New" to create your first note from an Instagram reel
-          </Text>
-        </View>
-      ) : (
+      <Animated.View style={[styles.listWrapper, { opacity: fadeAnim }]}>
         <FlatList
           data={notes}
           renderItem={({ item }) => (
@@ -94,8 +90,64 @@ export const HomeScreen = ({ navigation }: any) => {
           keyExtractor={(item) => item.id.toString()}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
+          ListHeaderComponent={
+            <View>
+              <View style={styles.hero}>
+                <View style={styles.badgeRow}>
+                  <View style={styles.badge}>
+                    <Text style={styles.badgeText}>Reel</Text>
+                  </View>
+                  <View style={styles.badgeDot} />
+                  <View style={styles.badge}>
+                    <Text style={styles.badgeText}>Notes</Text>
+                  </View>
+                </View>
+
+                <Text style={styles.title}>ReelNotes</Text>
+                <Text style={styles.subtitle}>
+                  Turn reels into sharp, searchable notes for your personal library.
+                </Text>
+
+                <View style={styles.actionsRow}>
+                  <Button
+                    title="New Note"
+                    onPress={() => navigation.navigate('AddNote')}
+                    style={styles.newButton}
+                  />
+                  <View style={styles.countPill}>
+                    <Text style={styles.countText}>
+                      {noteCount} {noteCount === 1 ? 'note' : 'notes'}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+
+              <SearchBar value={searchQuery} onChangeText={setSearchQuery} />
+
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>Your Library</Text>
+              <Text style={styles.sectionMeta}>{loading ? 'Updating...' : `${noteCount} total`}</Text>
+              </View>
+            </View>
+          }
+          ListEmptyComponent={
+            <View style={styles.emptyState}>
+              <View style={styles.emptyCard}>
+                <Text style={styles.emptyTitle}>No notes yet</Text>
+                <Text style={styles.emptySubtext}>
+                  Paste a reel link to extract highlights, then save your first note.
+                </Text>
+                <Button
+                  title="Create First Note"
+                  variant="secondary"
+                  onPress={() => navigation.navigate('AddNote')}
+                  style={styles.emptyButton}
+                />
+              </View>
+            </View>
+          }
         />
-      )}
+      </Animated.View>
     </SafeAreaView>
   );
 };
@@ -104,40 +156,145 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: theme.colors.background,
-    paddingHorizontal: theme.spacing.lg,
   },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginVertical: theme.spacing.lg,
+  background: {
+    ...StyleSheet.absoluteFillObject,
   },
-  title: {
-    ...theme.typography.title,
-    color: theme.colors.text,
+  glowTop: {
+    position: 'absolute',
+    width: 320,
+    height: 320,
+    borderRadius: 160,
+    backgroundColor: theme.colors.primarySoft,
+    top: -140,
+    right: -100,
+    opacity: 0.9,
   },
-  newButton: {
-    paddingHorizontal: theme.spacing.lg,
-    paddingVertical: theme.spacing.sm,
-    minHeight: 40,
+  glowBottom: {
+    position: 'absolute',
+    width: 380,
+    height: 380,
+    borderRadius: 190,
+    backgroundColor: theme.colors.accentSoft,
+    bottom: -200,
+    left: -140,
+    opacity: 0.8,
+  },
+  ring: {
+    position: 'absolute',
+    width: 220,
+    height: 220,
+    borderRadius: 110,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+    top: 120,
+    left: -60,
   },
   listContent: {
-    paddingBottom: theme.spacing.xl,
+    paddingHorizontal: theme.spacing.lg,
+    paddingBottom: theme.spacing.xxl,
+  },
+  listWrapper: {
+    flex: 1,
+  },
+  hero: {
+    marginTop: theme.spacing.lg,
+    marginBottom: theme.spacing.lg,
+  },
+  badgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: theme.spacing.sm,
+  },
+  badge: {
+    backgroundColor: theme.colors.cardElevated,
+    borderRadius: 999,
+    paddingHorizontal: theme.spacing.sm,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: theme.colors.borderSoft,
+  },
+  badgeText: {
+    ...theme.typography.caption,
+    color: theme.colors.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+  },
+  badgeDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: theme.colors.primary,
+    marginHorizontal: theme.spacing.sm,
+  },
+  title: {
+    ...theme.typography.display,
+    color: theme.colors.text,
+  },
+  subtitle: {
+    ...theme.typography.body,
+    color: theme.colors.textMuted,
+    marginTop: theme.spacing.sm,
+    maxWidth: 320,
+  },
+  actionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: theme.spacing.lg,
+  },
+  newButton: {
+    marginRight: theme.spacing.sm,
+  },
+  countPill: {
+    paddingVertical: theme.spacing.xs,
+    paddingHorizontal: theme.spacing.md,
+    borderRadius: 999,
+    backgroundColor: theme.colors.card,
+    borderWidth: 1,
+    borderColor: theme.colors.borderSoft,
+  },
+  countText: {
+    ...theme.typography.caption,
+    color: theme.colors.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: theme.spacing.sm,
+  },
+  sectionTitle: {
+    ...theme.typography.heading,
+    color: theme.colors.text,
+  },
+  sectionMeta: {
+    ...theme.typography.caption,
+    color: theme.colors.textSubtle,
   },
   emptyState: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: theme.spacing.xl,
+    paddingVertical: theme.spacing.xl,
   },
-  emptyText: {
-    ...theme.typography.heading,
-    color: theme.colors.textMuted,
+  emptyCard: {
+    backgroundColor: theme.colors.cardElevated,
+    borderRadius: theme.borderRadius.lg,
+    padding: theme.spacing.lg,
+    borderWidth: 1,
+    borderColor: theme.colors.borderSoft,
+    ...theme.shadows.soft,
+  },
+  emptyTitle: {
+    ...theme.typography.title,
+    color: theme.colors.text,
     marginBottom: theme.spacing.sm,
   },
   emptySubtext: {
     ...theme.typography.body,
     color: theme.colors.textMuted,
-    textAlign: 'center',
+    marginBottom: theme.spacing.lg,
+  },
+  emptyButton: {
+    alignSelf: 'flex-start',
   },
 });

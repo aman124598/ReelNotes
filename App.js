@@ -7,6 +7,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { NoteDetailScreen } from './src/screens/NoteDetailScreen';
 import { AddNoteScreen } from './src/screens/AddNoteScreen';
+import { theme } from './src/theme';
 
 const Stack = createStackNavigator();
 
@@ -47,7 +48,7 @@ export default function App() {
           <Stack.Navigator
             screenOptions={{
               headerShown: false,
-              cardStyle: { backgroundColor: '#0A0A0A' },
+              cardStyle: { backgroundColor: theme.colors.background },
             }}
           >
             <Stack.Screen name="Home" component={HomeScreen} />
@@ -63,20 +64,19 @@ export default function App() {
 const styles = StyleSheet.create({
   errorContainer: {
     flex: 1,
-    backgroundColor: '#0A0A0A',
+    backgroundColor: theme.colors.background,
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
   },
   errorTitle: {
-    color: '#FF6B6B',
-    fontSize: 20,
-    fontWeight: 'bold',
+    ...theme.typography.heading,
+    color: theme.colors.error,
     marginBottom: 10,
   },
   errorMessage: {
-    color: '#FFFFFF',
-    fontSize: 14,
+    ...theme.typography.body,
+    color: theme.colors.text,
     textAlign: 'center',
   },
 });
