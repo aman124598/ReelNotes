@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, FlatList, Alert, SafeAreaView, Animated } from 'react-native';
+import { View, Text, StyleSheet, FlatList, Alert, Animated } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { NoteCard } from '../components/NoteCard';
 import { SearchBar } from '../components/SearchBar';

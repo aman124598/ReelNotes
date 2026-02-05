@@ -5,10 +5,10 @@ import {
   StyleSheet,
   ScrollView,
   TextInput,
-  SafeAreaView,
   Alert,
   Animated,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button } from '../components/Button';
 import { getNoteById, updateNote, deleteNote } from '../services/supabase';
 import { Note } from '../types';

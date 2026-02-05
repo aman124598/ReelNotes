@@ -5,10 +5,10 @@ import {
   StyleSheet,
   ScrollView,
   TextInput,
-  SafeAreaView,
   Alert,
   Animated,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
 import { Button } from '../components/Button';
 import { addNote } from '../services/supabase';
@@ -117,7 +117,7 @@ export const AddNoteScreen = ({ navigation }: any) => {
       Alert.alert('Success', 'Note saved!', [
         {
           text: 'OK',
-          onPress: () => navigation.navigate('NoteDetail', { noteId }),
+          onPress: () => navigation.replace('NoteDetail', { noteId }),
         },
       ]);
     } else {
@@ -135,7 +135,7 @@ export const AddNoteScreen = ({ navigation }: any) => {
     });
 
     if (noteId) {
-      navigation.navigate('NoteDetail', { noteId });
+      navigation.replace('NoteDetail', { noteId });
     } else {
       Alert.alert('Error', 'Failed to create note');
     }
