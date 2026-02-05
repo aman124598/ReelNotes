@@ -9,13 +9,13 @@ if (!supabaseUrl || !supabaseKey) {
   console.warn('Supabase keys are missing! Check your .env file.');
 }
 
-export const supabase = (supabaseUrl && supabaseKey)
+export const supabase = (supabaseUrl && supabaseKey) 
   ? createClient(supabaseUrl, supabaseKey)
   // Create a mock client or throw a handled error when used, rather than crashing on init
   : {
-    from: () => ({ select: () => ({ data: [], error: { message: 'Supabase keys missing' } }) }),
-    functions: { invoke: async () => ({ error: { message: 'Supabase keys missing' } }) }
-  } as any;
+      from: () => ({ select: () => ({ data: [], error: { message: 'Supabase keys missing' } }) }),
+      functions: { invoke: async () => ({ error: { message: 'Supabase keys missing' } }) }
+    } as any;
 
 export const extractReelContent = async (url: string): Promise<{ transcript?: string; ocr?: string; error?: string }> => {
   try {

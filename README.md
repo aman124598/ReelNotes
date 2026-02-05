@@ -12,7 +12,7 @@ Transform Instagram Reels into organized, searchable notes with AI-powered extra
 - **🤖 AI Formatting** - Groq AI structures content with sections, bullets, and emojis
 - **🎨 Dark Theme** - Sleek black & red interface optimized for readability
 - **📝 Smart Notes** - Auto-detects content type (Recipe, Workout, Travel, etc.)
-- **💾 Local Storage** - SQLite database for offline access
+- **💾 Cloud Storage** - Supabase database for real-time access
 - **🗑️ Easy Management** - Swipe or tap to delete notes
 - **📱 Share Target** - Share reels directly from Instagram app
 
@@ -151,7 +151,7 @@ Auto-detected categories:
 - **Expo** 54
 - **TypeScript**
 - **React Navigation** 7
-- **SQLite** (local storage)
+- **Supabase** (cloud database)
 
 ### Backend
 - **Supabase** (database & edge functions)
@@ -166,7 +166,6 @@ ReelNotes/
 │   │   ├── components/    # Reusable UI components
 │   │   ├── screens/       # Main app screens
 │   │   ├── services/      # API integrations
-│   │   ├── db.ts          # SQLite database
 │   │   ├── theme.ts       # Design system
 │   │   └── types.ts       # TypeScript types
 │   ├── .env               # Environment variables
