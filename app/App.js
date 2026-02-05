@@ -1,20 +1,38 @@
+import React, { useEffect } from 'react';
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View } from 'react-native';
+import { NavigationContainer } from '@react-navigation/native';
+import { createStackNavigator } from '@react-navigation/stack';
+import { HomeScreen } from './src/screens/HomeScreen';
+import { NoteDetailScreen } from './src/screens/NoteDetailScreen';
+import { AddNoteScreen } from './src/screens/AddNoteScreen';
+import { initDatabase } from './src/db';
+
+const Stack = createStackNavigator();
 
 export default function App() {
+  useEffect(() => {
+    // Initialize database on app startup
+    try {
+      initDatabase();
+      console.log('Database initialized successfully');
+    } catch (error) {
+      console.error('Failed to initialize database:', error);
+    }
+  }, []);
+
   return (
-    <View style={styles.container}>
-      <Text>Open up App.js to start working on your app!</Text>
-      <StatusBar style="auto" />
-    </View>
+    <NavigationContainer>
+      <StatusBar style="light" />
+      <Stack.Navigator
+        screenOptions={{
+          headerShown: false,
+          cardStyle: { backgroundColor: '#0A0A0A' },
+        }}
+      >
+        <Stack.Screen name="Home" component={HomeScreen} />
+        <Stack.Screen name="NoteDetail" component={NoteDetailScreen} />
+        <Stack.Screen name="AddNote" component={AddNoteScreen} />
+      </Stack.Navigator>
+    </NavigationContainer>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});
