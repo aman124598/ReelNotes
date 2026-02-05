@@ -117,7 +117,11 @@ export const NoteDetailScreen = ({ route, navigation }: any) => {
           />
         </View>
 
-        <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+        <ScrollView
+          style={styles.content}
+          contentContainerStyle={styles.contentContainer}
+          showsVerticalScrollIndicator={false}
+        >
           <View style={styles.titleCard}>
             <Text style={styles.title}>{note.title || 'Untitled Note'}</Text>
             <View style={styles.metaRow}>
@@ -218,8 +222,13 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: theme.spacing.lg,
   },
+  contentContainer: {
+    paddingBottom: theme.spacing.xxl,
+    flexGrow: 1,
+  },
   contentWrapper: {
     flex: 1,
+    minHeight: 0,
   },
   titleCard: {
     backgroundColor: theme.colors.cardElevated,

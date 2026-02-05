@@ -296,10 +296,12 @@ const styles = StyleSheet.create({
   },
   contentWrapper: {
     flex: 1,
+    minHeight: 0,
   },
   contentContainer: {
     paddingHorizontal: theme.spacing.lg,
     paddingBottom: theme.spacing.xxl,
+    flexGrow: 1,
   },
   section: {
     marginBottom: theme.spacing.md,

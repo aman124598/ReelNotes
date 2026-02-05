@@ -90,7 +90,7 @@ export const HomeScreen = ({ navigation }: any) => {
           )}
           keyExtractor={(item) => item.id.toString()}
           style={styles.list}
-          contentContainerStyle={styles.listContent}
+        contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
           ListHeaderComponent={
             <View>
@@ -195,12 +195,15 @@ const styles = StyleSheet.create({
   listContent: {
     paddingHorizontal: theme.spacing.lg,
     paddingBottom: theme.spacing.xxl,
+    flexGrow: 1,
   },
   list: {
     flex: 1,
+    minHeight: 0,
   },
   listWrapper: {
     flex: 1,
+    minHeight: 0,
   },
   hero: {
     marginTop: theme.spacing.lg,
