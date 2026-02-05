@@ -36,7 +36,7 @@ export const NoteDetailScreen = ({ route, navigation }: any) => {
 
   const handleSave = () => {
     if (!note) return;
-    
+
     updateNote(note.id, { structured_text: editedText });
     setNote({ ...note, structured_text: editedText });
     setIsEditing(false);

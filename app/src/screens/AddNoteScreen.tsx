@@ -166,7 +166,7 @@ export const AddNoteScreen = ({ navigation }: any) => {
         {extractedData && (
           <View style={styles.previewSection}>
             <Text style={styles.previewLabel}>Preview</Text>
-            
+
             <View style={styles.previewCard}>
               <Text style={styles.previewTitle}>{extractedData.title}</Text>
               <Text style={styles.previewContentType}>{extractedData.contentType}</Text>

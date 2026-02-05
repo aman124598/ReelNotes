@@ -37,13 +37,13 @@ export const NoteCard: React.FC<NoteCardProps> = ({ note, onPress, onDelete }) =
           <Text style={styles.deleteText}>✕</Text>
         </TouchableOpacity>
       </View>
-      
+
       <Text style={styles.contentType}>{note.content_type}</Text>
-      
+
       <Text style={styles.preview} numberOfLines={3}>
         {note.structured_text}
       </Text>
-      
+
       <Text style={styles.date}>
         {new Date(note.created_at).toLocaleDateString('en-US', {
           month: 'short',
