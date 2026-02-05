@@ -30,12 +30,12 @@ export const getAllNotes = async (): Promise<Note[]> => {
     .from('reels')
     .select('*')
     .order('created_at', { ascending: false });
-  
+
   if (error) {
     console.error('Error fetching notes:', error);
     return [];
   }
-  
+
   return data || [];
 };
 
@@ -45,12 +45,12 @@ export const getNoteById = async (id: number): Promise<Note | null> => {
     .select('*')
     .eq('id', id)
     .single();
-  
+
   if (error) {
     console.error('Error fetching note:', error);
     return null;
   }
-  
+
   return data;
 };
 
@@ -60,12 +60,12 @@ export const searchNotes = async (query: string): Promise<Note[]> => {
     .select('*')
     .or(`title.ilike.%${query}%,structured_text.ilike.%${query}%`)
     .order('created_at', { ascending: false });
-  
+
   if (error) {
     console.error('Error searching notes:', error);
     return [];
   }
-  
+
   return data || [];
 };
 
@@ -75,12 +75,12 @@ export const addNote = async (note: Omit<Note, 'id' | 'created_at' | 'updated_at
     .insert([note])
     .select('id')
     .single();
-  
+
   if (error) {
     console.error('Error adding note:', error);
     return null;
   }
-  
+
   return data?.id || null;
 };
 
@@ -89,12 +89,12 @@ export const updateNote = async (id: number, updates: Partial<Note>): Promise<bo
     .from('reels')
     .update({ ...updates, updated_at: new Date().toISOString() })
     .eq('id', id);
-  
+
   if (error) {
     console.error('Error updating note:', error);
     return false;
   }
-  
+
   return true;
 };
 
@@ -103,12 +103,12 @@ export const deleteNote = async (id: number): Promise<boolean> => {
     .from('reels')
     .delete()
     .eq('id', id);
-  
+
   if (error) {
     console.error('Error deleting note:', error);
     return false;
   }
-  
+
   return true;
 };
 
@@ -118,11 +118,11 @@ export const getNotesByContentType = async (contentType: string): Promise<Note[]
     .select('*')
     .eq('content_type', contentType)
     .order('created_at', { ascending: false });
-  
+
   if (error) {
     console.error('Error fetching notes by type:', error);
     return [];
   }
-  
+
   return data || [];
 };
