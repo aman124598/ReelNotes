@@ -15,6 +15,7 @@ import { addNote } from '../services/supabase';
 import { extractReelContent } from '../services/supabase';
 import { formatWithGroq } from '../services/groq';
 import { theme } from '../theme';
+import { normalizeText } from '../utils/text';
 
 export const AddNoteScreen = ({ navigation }: any) => {
   const [url, setUrl] = useState('');
@@ -26,6 +27,10 @@ export const AddNoteScreen = ({ navigation }: any) => {
     structuredText: string;
     transcript?: string;
   } | null>(null);
+
+  const previewTitle = extractedData ? normalizeText(extractedData.title, 'Untitled Note') : '';
+  const previewContentType = extractedData ? normalizeText(extractedData.contentType, 'Other') : '';
+  const previewText = extractedData ? normalizeText(extractedData.structuredText, '') : '';
 
   useEffect(() => {
     Animated.timing(fadeAnim, {
@@ -106,9 +111,9 @@ export const AddNoteScreen = ({ navigation }: any) => {
 
     const noteId = await addNote({
       url: url.trim(),
-      title: extractedData.title,
-      content_type: extractedData.contentType,
-      structured_text: extractedData.structuredText,
+      title: previewTitle || 'Untitled Note',
+      content_type: previewContentType || 'Other',
+      structured_text: previewText,
       raw_transcript: extractedData.transcript,
       status: 'ready',
     });
@@ -202,12 +207,12 @@ export const AddNoteScreen = ({ navigation }: any) => {
               <Text style={styles.previewLabel}>Preview</Text>
 
               <View style={styles.previewCard}>
-                <Text style={styles.previewTitle}>{extractedData.title}</Text>
-                <Text style={styles.previewContentType}>{extractedData.contentType}</Text>
-                <Text style={styles.previewText} numberOfLines={10}>
-                  {extractedData.structuredText}
-                </Text>
-              </View>
+              <Text style={styles.previewTitle}>{previewTitle}</Text>
+              <Text style={styles.previewContentType}>{previewContentType}</Text>
+              <Text style={styles.previewText} numberOfLines={10}>
+                {previewText}
+              </Text>
+            </View>
 
               <Button title="Save Note" onPress={handleSave} style={styles.saveButton} />
             </View>

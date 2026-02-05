@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { Note } from '../types';
+import { normalizeText } from '../utils/text';
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const supabaseKey = process.env.EXPO_PUBLIC_SUPABASE_KEY;
@@ -16,6 +17,13 @@ export const supabase = (supabaseUrl && supabaseKey)
       from: () => ({ select: () => ({ data: [], error: { message: 'Supabase keys missing' } }) }),
       functions: { invoke: async () => ({ error: { message: 'Supabase keys missing' } }) }
     } as any;
+
+const normalizeNote = (note: any): Note => ({
+  ...note,
+  title: normalizeText(note?.title, 'Untitled Note'),
+  content_type: normalizeText(note?.content_type, 'Other'),
+  structured_text: normalizeText(note?.structured_text, ''),
+});
 
 export const extractReelContent = async (url: string): Promise<{ transcript?: string; ocr?: string; error?: string }> => {
   try {
@@ -47,7 +55,7 @@ export const getAllNotes = async (): Promise<Note[]> => {
     return [];
   }
 
-  return data || [];
+  return (data || []).map(normalizeNote);
 };
 
 export const getNoteById = async (id: number): Promise<Note | null> => {
@@ -62,7 +70,7 @@ export const getNoteById = async (id: number): Promise<Note | null> => {
     return null;
   }
 
-  return data;
+  return data ? normalizeNote(data) : null;
 };
 
 export const searchNotes = async (query: string): Promise<Note[]> => {
@@ -77,13 +85,20 @@ export const searchNotes = async (query: string): Promise<Note[]> => {
     return [];
   }
 
-  return data || [];
+  return (data || []).map(normalizeNote);
 };
 
 export const addNote = async (note: Omit<Note, 'id' | 'created_at' | 'updated_at'>): Promise<number | null> => {
+  const payload = {
+    ...note,
+    title: normalizeText(note.title, 'Untitled Note'),
+    content_type: normalizeText(note.content_type, 'Other'),
+    structured_text: normalizeText(note.structured_text, ''),
+  };
+
   const { data, error } = await supabase
     .from('reels')
-    .insert([note])
+    .insert([payload])
     .select('id')
     .single();
 
@@ -96,9 +111,23 @@ export const addNote = async (note: Omit<Note, 'id' | 'created_at' | 'updated_at
 };
 
 export const updateNote = async (id: number, updates: Partial<Note>): Promise<boolean> => {
+  const normalizedUpdates: Partial<Note> = { ...updates };
+
+  if ('structured_text' in updates) {
+    normalizedUpdates.structured_text = normalizeText(updates.structured_text, '');
+  }
+
+  if ('title' in updates) {
+    normalizedUpdates.title = normalizeText(updates.title, 'Untitled Note');
+  }
+
+  if ('content_type' in updates) {
+    normalizedUpdates.content_type = normalizeText(updates.content_type, 'Other');
+  }
+
   const { error } = await supabase
     .from('reels')
-    .update({ ...updates, updated_at: new Date().toISOString() })
+    .update({ ...normalizedUpdates, updated_at: new Date().toISOString() })
     .eq('id', id);
 
   if (error) {
@@ -135,5 +164,5 @@ export const getNotesByContentType = async (contentType: string): Promise<Note[]
     return [];
   }
 
-  return data || [];
+  return (data || []).map(normalizeNote);
 };

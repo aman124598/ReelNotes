@@ -1,55 +1,7 @@
+import { normalizeContentType, normalizeText } from '../utils/text';
+
 const GROQ_API_KEY = process.env.EXPO_PUBLIC_GROQ_API_KEY || '';
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
-
-const normalizeText = (value: unknown, fallback: string): string => {
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    return trimmed.length ? trimmed : fallback;
-  }
-
-  if (value === null || value === undefined) {
-    return fallback;
-  }
-
-  if (Array.isArray(value)) {
-    const parts = value
-      .map((item) => normalizeText(item, ''))
-      .filter((item) => item.length > 0);
-    return parts.length ? parts.join('\n\n') : fallback;
-  }
-
-  if (typeof value === 'object') {
-    const record = value as Record<string, unknown>;
-    if (record.section || record.content) {
-      const section = normalizeText(record.section, '');
-      const content = normalizeText(record.content, '');
-      const combined = [section, content].filter(Boolean).join('\n');
-      return combined.length ? combined : fallback;
-    }
-
-    if (Array.isArray(record.sections)) {
-      return normalizeText(record.sections, fallback);
-    }
-
-    try {
-      return JSON.stringify(record, null, 2);
-    } catch (err) {
-      return fallback;
-    }
-  }
-
-  return String(value);
-};
-
-const normalizeContentType = (value: unknown): string => {
-  const text = normalizeText(value, 'Other').toLowerCase();
-  if (text.includes('recipe')) return 'Recipe';
-  if (text.includes('workout')) return 'Workout';
-  if (text.includes('travel')) return 'Travel';
-  if (text.includes('educational')) return 'Educational';
-  if (text.includes('diy')) return 'DIY';
-  return 'Other';
-};
 
 export const formatWithGroq = async (transcript: string): Promise<{ title: string; contentType: string; structuredText: string }> => {
   try {

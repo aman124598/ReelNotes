@@ -89,6 +89,7 @@ export const HomeScreen = ({ navigation }: any) => {
             />
           )}
           keyExtractor={(item) => item.id.toString()}
+          style={styles.list}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
           ListHeaderComponent={
@@ -194,6 +195,9 @@ const styles = StyleSheet.create({
   listContent: {
     paddingHorizontal: theme.spacing.lg,
     paddingBottom: theme.spacing.xxl,
+  },
+  list: {
+    flex: 1,
   },
   listWrapper: {
     flex: 1,
