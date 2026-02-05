@@ -22,7 +22,7 @@ async function generateIcons() {
     // I'll stick to just icon.png as requested, but maybe update adaptive if it's easy.
     // Let's just do icon.png to strict to request, but standard expo app needs adaptive too usually.
     // I'll update adaptive icon too to be safe so the app looks consistent.
-    
+
     console.log('Generating adaptive-icon.png...');
     await sharp(svgPath)
       .resize(1024, 1024)
