@@ -11,7 +11,7 @@ let cachedData: StorageData | null = null;
 
 const getData = (): StorageData => {
   if (cachedData) return cachedData;
-  
+
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) {
@@ -21,7 +21,7 @@ const getData = (): StorageData => {
   } catch (error) {
     console.error('Error reading from localStorage:', error);
   }
-  
+
   cachedData = { notes: [], nextId: 1 };
   return cachedData;
 };
@@ -42,7 +42,7 @@ export const initDatabase = () => {
 
 export const getAllNotes = (): Note[] => {
   const data = getData();
-  return [...data.notes].sort((a, b) => 
+  return [...data.notes].sort((a, b) =>
     new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
   );
 };
@@ -56,11 +56,11 @@ export const searchNotes = (query: string): Note[] => {
   const data = getData();
   const searchTerm = query.toLowerCase();
   return data.notes
-    .filter(note => 
+    .filter(note =>
       note.title.toLowerCase().includes(searchTerm) ||
       note.structured_text.toLowerCase().includes(searchTerm)
     )
-    .sort((a, b) => 
+    .sort((a, b) =>
       new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     );
 };
@@ -74,18 +74,18 @@ export const addNote = (note: Omit<Note, 'id' | 'created_at' | 'updated_at'>): n
     created_at: now,
     updated_at: now,
   };
-  
+
   data.notes.push(newNote);
   data.nextId += 1;
   saveData(data);
-  
+
   return newNote.id;
 };
 
 export const updateNote = (id: number, updates: Partial<Note>): void => {
   const data = getData();
   const index = data.notes.findIndex(note => note.id === id);
-  
+
   if (index !== -1) {
     data.notes[index] = {
       ...data.notes[index],
@@ -108,7 +108,7 @@ export const getNotesByContentType = (contentType: string): Note[] => {
   const data = getData();
   return data.notes
     .filter(note => note.content_type === contentType)
-    .sort((a, b) => 
+    .sort((a, b) =>
       new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     );
 };
