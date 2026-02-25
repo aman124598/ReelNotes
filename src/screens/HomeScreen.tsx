@@ -1,18 +1,23 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, FlatList, Alert, Animated } from 'react-native';
+import { View, Text, StyleSheet, FlatList, Alert, Animated, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { NoteCard } from '../components/NoteCard';
 import { SearchBar } from '../components/SearchBar';
 import { Button } from '../components/Button';
-import { getAllNotes, searchNotes, deleteNote } from '../services/supabase';
+import { ScreenBackdrop } from '../components/ScreenBackdrop';
+import { getNotesPage, searchNotesPage, deleteNote } from '../services/supabase';
 import { Note } from '../types';
 import { theme } from '../theme';
 
 export const HomeScreen = ({ navigation }: any) => {
+  const PAGE_SIZE = 20;
   const [notes, setNotes] = useState<Note[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [currentPage, setCurrentPage] = useState(0);
+  const [hasMore, setHasMore] = useState(true);
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -23,26 +28,44 @@ export const HomeScreen = ({ navigation }: any) => {
     }).start();
   }, [fadeAnim]);
 
-  const loadNotes = async () => {
-    setLoading(true);
+  const loadNotes = async (reset = false) => {
+    const nextPage = reset ? 0 : currentPage;
+
+    if (reset) {
+      setLoading(true);
+    } else {
+      if (loading || loadingMore || !hasMore) return;
+      setLoadingMore(true);
+    }
+
     try {
+      let batch: { notes: Note[]; hasMore: boolean };
       if (searchQuery.trim()) {
-        const results = await searchNotes(searchQuery);
-        setNotes(results);
+        batch = await searchNotesPage(searchQuery.trim(), nextPage, PAGE_SIZE);
       } else {
-        const results = await getAllNotes();
-        setNotes(results);
+        batch = await getNotesPage(nextPage, PAGE_SIZE);
       }
+
+      setHasMore(batch.hasMore);
+      setCurrentPage(nextPage + 1);
+      setNotes((prev) => (reset ? batch.notes : [...prev, ...batch.notes]));
     } catch (error) {
       console.error('Error loading notes:', error);
     } finally {
-      setLoading(false);
+      if (reset) {
+        setLoading(false);
+      } else {
+        setLoadingMore(false);
+      }
     }
   };
 
   useFocusEffect(
     useCallback(() => {
-      loadNotes();
+      setCurrentPage(0);
+      setHasMore(true);
+      setNotes([]);
+      loadNotes(true);
     }, [searchQuery])
   );
 
@@ -57,11 +80,14 @@ export const HomeScreen = ({ navigation }: any) => {
           style: 'destructive',
           onPress: async () => {
             const success = await deleteNote(id);
-            if (success) {
-              loadNotes();
-            } else {
-              Alert.alert('Error', 'Failed to delete note');
-            }
+              if (success) {
+                setCurrentPage(0);
+                setHasMore(true);
+                setNotes([]);
+                loadNotes(true);
+              } else {
+                Alert.alert('Error', 'Failed to delete note');
+              }
           },
         },
       ]
@@ -69,14 +95,13 @@ export const HomeScreen = ({ navigation }: any) => {
   };
 
   const noteCount = notes.length;
+  const processingCount = notes.filter((note) => note.status === 'queued' || note.status === 'processing').length;
+  const failedCount = notes.filter((note) => note.status === 'failed').length;
+  const readyCount = notes.filter((note) => note.status === 'ready').length;
 
   return (
     <SafeAreaView style={styles.container}>
-      <View pointerEvents="none" style={styles.background}>
-        <View style={styles.glowTop} />
-        <View style={styles.glowBottom} />
-        <View style={styles.ring} />
-      </View>
+      <ScreenBackdrop />
 
       <Animated.View style={[styles.listWrapper, { opacity: fadeAnim }]}>
         <FlatList
@@ -90,24 +115,26 @@ export const HomeScreen = ({ navigation }: any) => {
           )}
           keyExtractor={(item) => item.id.toString()}
           style={styles.list}
-        contentContainerStyle={styles.listContent}
+          contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
+          onEndReached={() => loadNotes(false)}
+          onEndReachedThreshold={0.5}
           ListHeaderComponent={
             <View>
               <View style={styles.hero}>
-                <View style={styles.badgeRow}>
-                  <View style={styles.badge}>
-                    <Text style={styles.badgeText}>Reel</Text>
+                <View style={styles.profileRow}>
+                  <View style={styles.profileBadge}>
+                    <Text style={styles.profileInitials}>RN</Text>
                   </View>
-                  <View style={styles.badgeDot} />
-                  <View style={styles.badge}>
-                    <Text style={styles.badgeText}>Notes</Text>
+                  <View style={styles.profileTextWrap}>
+                    <Text style={styles.profileName}>ReelNotes</Text>
+                    <Text style={styles.profileRole}>Recipe extraction workspace</Text>
                   </View>
                 </View>
 
-                <Text style={styles.title}>ReelNotes</Text>
+                <Text style={styles.title}>Your Notes</Text>
                 <Text style={styles.subtitle}>
-                  Turn reels into sharp, searchable notes for your personal library.
+                  Keep short, structured recipe notes from reels in one calm workspace.
                 </Text>
 
                 <View style={styles.actionsRow}>
@@ -126,11 +153,34 @@ export const HomeScreen = ({ navigation }: any) => {
 
               <SearchBar value={searchQuery} onChangeText={setSearchQuery} />
 
+              <View style={styles.statRow}>
+                <View style={styles.statPill}>
+                  <Text style={styles.statLabel}>Ready</Text>
+                  <Text style={styles.statValue}>{readyCount}</Text>
+                </View>
+                <View style={styles.statPill}>
+                  <Text style={styles.statLabel}>Processing</Text>
+                  <Text style={styles.statValue}>{processingCount}</Text>
+                </View>
+                <View style={styles.statPill}>
+                  <Text style={styles.statLabel}>Failed</Text>
+                  <Text style={styles.statValue}>{failedCount}</Text>
+                </View>
+              </View>
+
               <View style={styles.sectionHeader}>
                 <Text style={styles.sectionTitle}>Your Library</Text>
               <Text style={styles.sectionMeta}>{loading ? 'Updating...' : `${noteCount} total`}</Text>
               </View>
             </View>
+          }
+          ListFooterComponent={
+            loadingMore ? (
+              <View style={styles.footerLoader}>
+                <ActivityIndicator color={theme.colors.primary} />
+                <Text style={styles.footerLoaderText}>Loading more notes...</Text>
+              </View>
+            ) : null
           }
           ListEmptyComponent={
             <View style={styles.emptyState}>
@@ -159,39 +209,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: theme.colors.background,
   },
-  background: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  glowTop: {
-    position: 'absolute',
-    width: 320,
-    height: 320,
-    borderRadius: 160,
-    backgroundColor: theme.colors.primarySoft,
-    top: -140,
-    right: -100,
-    opacity: 0.9,
-  },
-  glowBottom: {
-    position: 'absolute',
-    width: 380,
-    height: 380,
-    borderRadius: 190,
-    backgroundColor: theme.colors.accentSoft,
-    bottom: -200,
-    left: -140,
-    opacity: 0.8,
-  },
-  ring: {
-    position: 'absolute',
-    width: 220,
-    height: 220,
-    borderRadius: 110,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.06)',
-    top: 120,
-    left: -60,
-  },
   listContent: {
     paddingHorizontal: theme.spacing.lg,
     paddingBottom: theme.spacing.xxl,
@@ -209,31 +226,36 @@ const styles = StyleSheet.create({
     marginTop: theme.spacing.lg,
     marginBottom: theme.spacing.lg,
   },
-  badgeRow: {
+  profileRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: theme.spacing.sm,
+    marginBottom: theme.spacing.md,
   },
-  badge: {
-    backgroundColor: theme.colors.cardElevated,
-    borderRadius: 999,
-    paddingHorizontal: theme.spacing.sm,
-    paddingVertical: 4,
+  profileBadge: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: theme.colors.primarySoft,
+    alignItems: 'center',
+    justifyContent: 'center',
     borderWidth: 1,
     borderColor: theme.colors.borderSoft,
   },
-  badgeText: {
+  profileInitials: {
     ...theme.typography.caption,
-    color: theme.colors.textMuted,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
+    color: theme.colors.primary,
+    letterSpacing: 0.6,
   },
-  badgeDot: {
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: theme.colors.primary,
-    marginHorizontal: theme.spacing.sm,
+  profileTextWrap: {
+    marginLeft: theme.spacing.sm,
+  },
+  profileName: {
+    ...theme.typography.heading,
+    color: theme.colors.text,
+  },
+  profileRole: {
+    ...theme.typography.caption,
+    color: theme.colors.textSubtle,
   },
   title: {
     ...theme.typography.display,
@@ -273,6 +295,33 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: theme.spacing.sm,
   },
+  statRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: theme.spacing.md,
+  },
+  statPill: {
+    backgroundColor: theme.colors.card,
+    borderColor: theme.colors.borderSoft,
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingVertical: theme.spacing.xs,
+    paddingHorizontal: theme.spacing.md,
+    marginRight: theme.spacing.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  statLabel: {
+    ...theme.typography.caption,
+    color: theme.colors.textSubtle,
+    marginRight: theme.spacing.xs,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
+  statValue: {
+    ...theme.typography.caption,
+    color: theme.colors.text,
+  },
   sectionTitle: {
     ...theme.typography.heading,
     color: theme.colors.text,
@@ -304,5 +353,15 @@ const styles = StyleSheet.create({
   },
   emptyButton: {
     alignSelf: 'flex-start',
+  },
+  footerLoader: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: theme.spacing.lg,
+  },
+  footerLoaderText: {
+    ...theme.typography.caption,
+    color: theme.colors.textSubtle,
+    marginTop: theme.spacing.xs,
   },
 });

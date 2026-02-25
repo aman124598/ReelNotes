@@ -1,62 +1,60 @@
-# Supabase Edge Function Deployment
+# Supabase Edge Functions
 
 ## Quick Deploy
 
 ```bash
-# Install Supabase CLI
 npm install -g supabase
-
-# Login
 supabase login
+supabase link --project-ref YOUR_PROJECT_REF
 
-# Link project
-supabase link --project-ref ynvnggcpchoarqsbyopd
+cd supabase
+supabase functions deploy enqueue-reel
+supabase functions deploy get-reel-status
 
-# Deploy function
-cd supabase/functions
-supabase functions deploy extract-reel
-
-# Set RapidAPI key (optional but recommended)
-supabase secrets set RAPID_API_KEY=your_rapidapi_key_here
+# Required for edge functions to write to DB directly
+supabase secrets set SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 ```
 
-## Testing the Function
+## `enqueue-reel`
 
-```bash
-# Test locally
-supabase functions serve extract-reel
+Queues a new reel job or retries an existing note.
 
-# Test deployed function
-curl -X POST \
-  https://ynvnggcpchoarqsbyopd.supabase.co/functions/v1/extract-reel \
-  -H "Authorization: Bearer YOUR_ANON_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"url":"https://www.instagram.com/reel/ABC123/"}'
+### Request
+
+```json
+{ "url": "https://www.instagram.com/reel/ABC123/" }
 ```
 
-## Get RapidAPI Key
+Retry format:
 
-1. Go to https://rapidapi.com/
-2. Sign up/Login
-3. Subscribe to Instagram Scraper API: https://rapidapi.com/restyler/api/instagram-scraper-api2
-4. Copy your RapidAPI key from the API dashboard
-5. Set in Supabase: `supabase secrets set RAPID_API_KEY=your_key`
+```json
+{ "reelId": 123, "retry": true }
+```
 
-## Function Environment Variables
+### Response
 
-- `RAPID_API_KEY` (optional): For better extraction quality
+```json
+{ "reelId": 123, "status": "queued" }
+```
 
-## Function Response
+## `get-reel-status`
+
+Fetches latest reel note fields for polling.
+
+### Request
+
+```json
+{ "reelId": 123 }
+```
+
+### Response
 
 ```json
 {
-  "transcript": "Video caption/transcript text",
-  "ocr": "On-screen text extracted"
+  "reel": {
+    "id": 123,
+    "status": "processing",
+    "processing_error": null
+  }
 }
 ```
-
-## Troubleshooting
-
-- Check logs: `supabase functions logs extract-reel`
-- Test URL format: Must be valid Instagram reel/post URL
-- Verify secrets: `supabase secrets list`

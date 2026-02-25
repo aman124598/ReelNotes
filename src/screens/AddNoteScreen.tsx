@@ -7,30 +7,25 @@ import {
   TextInput,
   Alert,
   Animated,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
 import { Button } from '../components/Button';
+import { ScreenBackdrop } from '../components/ScreenBackdrop';
 import { addNote } from '../services/supabase';
-import { extractReelContent } from '../services/supabase';
-import { formatWithGroq } from '../services/groq';
+import { enqueueReel } from '../services/supabase';
 import { theme } from '../theme';
-import { normalizeText } from '../utils/text';
 
 export const AddNoteScreen = ({ navigation }: any) => {
   const [url, setUrl] = useState('');
+  const [manualTitle, setManualTitle] = useState('');
+  const [manualBody, setManualBody] = useState('');
   const [loading, setLoading] = useState(false);
+  const [manualSaving, setManualSaving] = useState(false);
   const fadeAnim = useRef(new Animated.Value(0)).current;
-  const [extractedData, setExtractedData] = useState<{
-    title: string;
-    contentType: string;
-    structuredText: string;
-    transcript?: string;
-  } | null>(null);
-
-  const previewTitle = extractedData ? normalizeText(extractedData.title, 'Untitled Note') : '';
-  const previewContentType = extractedData ? normalizeText(extractedData.contentType, 'Other') : '';
-  const previewText = extractedData ? normalizeText(extractedData.structuredText, '') : '';
+  const scrollRef = useRef<ScrollView | null>(null);
 
   useEffect(() => {
     Animated.timing(fadeAnim, {
@@ -70,73 +65,37 @@ export const AddNoteScreen = ({ navigation }: any) => {
     setLoading(true);
 
     try {
-      // Extract content from Instagram
-      const { transcript, ocr, error } = await extractReelContent(url);
-
-      if (error) {
-        Alert.alert('Extraction Error', error);
+      const { reelId, error } = await enqueueReel(url.trim());
+      if (error || !reelId) {
+        Alert.alert('Queue Error', error || 'Failed to queue reel processing');
         setLoading(false);
         return;
       }
 
-      const content = transcript || ocr || '';
-
-      if (!content) {
-        Alert.alert('No Content', 'Could not extract content from this reel. You can still create a note manually.');
-        setLoading(false);
-        return;
-      }
-
-      // Format with Groq AI
-      const formatted = await formatWithGroq(content);
-
-      setExtractedData({
-        ...formatted,
-        transcript: content,
-      });
-
-      Alert.alert('Success', 'Content extracted and formatted!');
+      navigation.replace('NoteDetail', { noteId: reelId });
     } catch (err: any) {
-      Alert.alert('Error', err.message || 'Failed to extract content');
+      Alert.alert('Error', err.message || 'Failed to queue reel processing');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSave = async () => {
-    if (!extractedData) {
-      Alert.alert('Error', 'Please extract content first');
+  const handleManualCreate = async () => {
+    const cleanTitle = manualTitle.trim();
+    const cleanBody = manualBody.trim();
+
+    if (!cleanBody) {
+      Alert.alert('Manual Note', 'Please add note content before saving.');
       return;
     }
 
+    setManualSaving(true);
     const noteId = await addNote({
-      url: url.trim(),
-      title: previewTitle || 'Untitled Note',
-      content_type: previewContentType || 'Other',
-      structured_text: previewText,
-      raw_transcript: extractedData.transcript,
-      status: 'ready',
-    });
-
-    if (noteId) {
-      Alert.alert('Success', 'Note saved!', [
-        {
-          text: 'OK',
-          onPress: () => navigation.replace('NoteDetail', { noteId }),
-        },
-      ]);
-    } else {
-      Alert.alert('Error', 'Failed to save note');
-    }
-  };
-
-  const handleManualCreate = async () => {
-    const noteId = await addNote({
-      url: url.trim() || 'Manual Entry',
-      title: 'Untitled Note',
+      url: 'Manual Entry',
+      title: cleanTitle || cleanBody.split('\n')[0].slice(0, 60) || 'Untitled Note',
       content_type: 'Other',
-      structured_text: '',
-      status: 'draft',
+      structured_text: cleanBody,
+      status: 'ready',
     });
 
     if (noteId) {
@@ -144,15 +103,24 @@ export const AddNoteScreen = ({ navigation }: any) => {
     } else {
       Alert.alert('Error', 'Failed to create note');
     }
+    setManualSaving(false);
+  };
+
+  const bringManualSectionIntoView = () => {
+    setTimeout(() => {
+      scrollRef.current?.scrollToEnd({ animated: true });
+    }, 120);
   };
 
   return (
     <SafeAreaView style={styles.container}>
-      <View pointerEvents="none" style={styles.background}>
-        <View style={styles.glowTop} />
-        <View style={styles.glowBottom} />
-      </View>
+      <ScreenBackdrop />
 
+      <KeyboardAvoidingView
+        style={styles.keyboardWrapper}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}
+      >
       <Animated.View style={[styles.contentWrapper, { opacity: fadeAnim }]}>
         <View style={styles.header}>
           <Button
@@ -163,15 +131,17 @@ export const AddNoteScreen = ({ navigation }: any) => {
           />
           <View style={styles.headerText}>
             <Text style={styles.headerTitle}>New Note</Text>
-            <Text style={styles.headerSubtitle}>Extract a reel and save the highlights.</Text>
+            <Text style={styles.headerSubtitle}>Paste a reel and save only key recipe notes.</Text>
           </View>
           <View style={styles.headerSpacer} />
         </View>
 
         <ScrollView
+          ref={scrollRef}
           style={styles.content}
           contentContainerStyle={styles.contentContainer}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
         >
           <View style={styles.section}>
             <Text style={styles.label}>Instagram Link</Text>
@@ -196,41 +166,53 @@ export const AddNoteScreen = ({ navigation }: any) => {
           </View>
 
           <Button
-            title={loading ? 'Extracting...' : 'Extract Content'}
+            title={loading ? 'Queueing...' : 'Process Reel'}
             onPress={handleExtract}
             loading={loading}
             style={styles.extractButton}
           />
-
-          {extractedData && (
-            <View style={styles.previewSection}>
-              <Text style={styles.previewLabel}>Preview</Text>
-
-              <View style={styles.previewCard}>
-              <Text style={styles.previewTitle}>{previewTitle}</Text>
-              <Text style={styles.previewContentType}>{previewContentType}</Text>
-              <Text style={styles.previewText} numberOfLines={10}>
-                {previewText}
-              </Text>
-            </View>
-
-              <Button title="Save Note" onPress={handleSave} style={styles.saveButton} />
-            </View>
-          )}
+          <Text style={styles.processingText}>
+            We will save the reel immediately and extract recipe notes in the background.
+          </Text>
 
           <View style={styles.divider}>
             <View style={styles.dividerLine} />
-            <Text style={styles.dividerText}>OR</Text>
+            <Text style={styles.dividerText}>MANUAL</Text>
             <View style={styles.dividerLine} />
           </View>
 
+          <View style={styles.section}>
+            <Text style={styles.label}>Title</Text>
+            <TextInput
+              style={styles.input}
+              value={manualTitle}
+              onChangeText={setManualTitle}
+              placeholder="Quick title for your note"
+              placeholderTextColor={theme.colors.textMuted}
+              onFocus={bringManualSectionIntoView}
+            />
+            <Text style={[styles.label, styles.manualContentLabel]}>Content</Text>
+            <TextInput
+              style={styles.manualInput}
+              value={manualBody}
+              onChangeText={setManualBody}
+              placeholder="Write your note manually..."
+              placeholderTextColor={theme.colors.textMuted}
+              multiline
+              textAlignVertical="top"
+              onFocus={bringManualSectionIntoView}
+            />
+          </View>
+
           <Button
-            title="Create Manual Note"
+            title={manualSaving ? 'Saving...' : 'Create Manual Note'}
             onPress={handleManualCreate}
             variant="secondary"
+            loading={manualSaving}
           />
         </ScrollView>
       </Animated.View>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 };
@@ -240,28 +222,8 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: theme.colors.background,
   },
-  background: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  glowTop: {
-    position: 'absolute',
-    width: 300,
-    height: 300,
-    borderRadius: 150,
-    backgroundColor: theme.colors.primarySoft,
-    top: -160,
-    right: -120,
-    opacity: 0.9,
-  },
-  glowBottom: {
-    position: 'absolute',
-    width: 360,
-    height: 360,
-    borderRadius: 180,
-    backgroundColor: theme.colors.accentSoft,
-    bottom: -200,
-    left: -140,
-    opacity: 0.8,
+  keyboardWrapper: {
+    flex: 1,
   },
   header: {
     flexDirection: 'row',
@@ -304,7 +266,13 @@ const styles = StyleSheet.create({
     flexGrow: 1,
   },
   section: {
-    marginBottom: theme.spacing.md,
+    marginBottom: theme.spacing.lg,
+    backgroundColor: theme.colors.card,
+    borderRadius: theme.borderRadius.lg,
+    padding: theme.spacing.md,
+    borderWidth: 1,
+    borderColor: theme.colors.borderSoft,
+    ...theme.shadows.soft,
   },
   label: {
     ...theme.typography.body,
@@ -319,7 +287,7 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
-    backgroundColor: theme.colors.cardElevated,
+    backgroundColor: theme.colors.backgroundAlt,
     borderRadius: theme.borderRadius.lg,
     padding: theme.spacing.md,
     color: theme.colors.text,
@@ -339,42 +307,9 @@ const styles = StyleSheet.create({
   extractButton: {
     marginBottom: theme.spacing.lg,
   },
-  previewSection: {
-    marginBottom: theme.spacing.lg,
-  },
-  previewLabel: {
-    ...theme.typography.body,
-    color: theme.colors.text,
-    marginBottom: theme.spacing.sm,
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-  },
-  previewCard: {
-    backgroundColor: theme.colors.cardElevated,
-    borderRadius: theme.borderRadius.lg,
-    padding: theme.spacing.lg,
-    marginBottom: theme.spacing.md,
-    borderWidth: 1,
-    borderColor: theme.colors.borderSoft,
-    ...theme.shadows.soft,
-  },
-  previewTitle: {
-    ...theme.typography.heading,
-    color: theme.colors.text,
-    marginBottom: theme.spacing.xs,
-  },
-  previewContentType: {
+  processingText: {
     ...theme.typography.caption,
-    color: theme.colors.accent,
-    marginBottom: theme.spacing.sm,
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-  },
-  previewText: {
-    ...theme.typography.body,
-    color: theme.colors.textMuted,
-  },
-  saveButton: {
+    color: theme.colors.textSubtle,
     marginBottom: theme.spacing.md,
   },
   divider: {
@@ -394,5 +329,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: theme.spacing.md,
     textTransform: 'uppercase',
     letterSpacing: 1.2,
+  },
+  manualContentLabel: {
+    marginTop: theme.spacing.md,
+  },
+  manualInput: {
+    backgroundColor: theme.colors.backgroundAlt,
+    borderRadius: theme.borderRadius.lg,
+    padding: theme.spacing.md,
+    color: theme.colors.text,
+    ...theme.typography.body,
+    borderWidth: 1,
+    borderColor: theme.colors.borderSoft,
+    minHeight: 140,
   },
 });

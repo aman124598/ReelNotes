@@ -10,43 +10,75 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button } from '../components/Button';
-import { getNoteById, updateNote, deleteNote } from '../services/supabase';
+import { ScreenBackdrop } from '../components/ScreenBackdrop';
+import { getNoteById, updateNote, deleteNote, retryReelProcessing } from '../services/supabase';
 import { Note } from '../types';
 import { theme } from '../theme';
 
 export const NoteDetailScreen = ({ route, navigation }: any) => {
+  const PROCESSING_TIMEOUT_MS = 3 * 60 * 1000;
   const { noteId } = route.params;
   const [note, setNote] = useState<Note | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [editedText, setEditedText] = useState('');
   const [loading, setLoading] = useState(true);
+  const [retrying, setRetrying] = useState(false);
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
+    let mounted = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
     Animated.timing(fadeAnim, {
       toValue: 1,
       duration: 450,
       useNativeDriver: true,
     }).start();
 
-    const loadNote = async () => {
-      setLoading(true);
+    const refreshNote = async (isInitial = false) => {
+      if (isInitial) setLoading(true);
+
       const loadedNote = await getNoteById(noteId);
-      if (loadedNote) {
-        setNote(loadedNote);
-        setEditedText(loadedNote.structured_text);
-      } else {
+      if (!mounted) return;
+
+      if (!loadedNote) {
         Alert.alert('Error', 'Note not found');
         navigation.goBack();
+        return;
       }
-      setLoading(false);
+
+      setNote(loadedNote);
+      if (!isEditing) {
+        setEditedText(loadedNote.structured_text);
+      }
+
+      if (isInitial) {
+        setLoading(false);
+      }
+
+      const isProcessing = loadedNote.status === 'queued' || loadedNote.status === 'processing';
+      const updatedAt = new Date(loadedNote.updated_at || loadedNote.created_at).getTime();
+      const isStale = Date.now() - updatedAt > PROCESSING_TIMEOUT_MS;
+
+      if (isProcessing && !isStale) {
+        timer = setTimeout(() => refreshNote(false), 4000);
+      }
     };
 
-    loadNote();
-  }, [noteId]);
+    refreshNote(true);
+
+    return () => {
+      mounted = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, [noteId, navigation, isEditing, fadeAnim]);
 
   const handleSave = async () => {
     if (!note) return;
+    if (!editedText.trim()) {
+      Alert.alert('Empty Note', 'Note content cannot be empty.');
+      return;
+    }
 
     const success = await updateNote(note.id, { structured_text: editedText });
     if (success) {
@@ -56,6 +88,25 @@ export const NoteDetailScreen = ({ route, navigation }: any) => {
     } else {
       Alert.alert('Error', 'Failed to update note');
     }
+  };
+
+  const handleRetry = async () => {
+    if (!note) return;
+    setRetrying(true);
+    const { error } = await retryReelProcessing(note.id);
+    setRetrying(false);
+
+    if (error) {
+      Alert.alert('Retry Failed', error);
+      return;
+    }
+
+    setNote({
+      ...note,
+      status: 'queued',
+      processing_error: undefined,
+      structured_text: note.structured_text || 'Processing speech and extracting recipe notes...',
+    });
   };
 
   const handleDelete = () => {
@@ -85,9 +136,7 @@ export const NoteDetailScreen = ({ route, navigation }: any) => {
   if (loading || !note) {
     return (
       <SafeAreaView style={styles.container}>
-        <View pointerEvents="none" style={styles.background}>
-          <View style={styles.glowTop} />
-        </View>
+        <ScreenBackdrop />
         <View style={styles.loadingContainer}>
           <Text style={styles.loadingText}>Loading...</Text>
         </View>
@@ -95,12 +144,23 @@ export const NoteDetailScreen = ({ route, navigation }: any) => {
     );
   }
 
+  const isProcessing = note.status === 'queued' || note.status === 'processing';
+  const isFailed = note.status === 'failed';
+  const processingAgeMs = Date.now() - new Date(note.updated_at || note.created_at).getTime();
+  const isStaleProcessing = isProcessing && processingAgeMs > PROCESSING_TIMEOUT_MS;
+  const processingMinutes = Math.max(1, Math.floor(processingAgeMs / 60000));
+
+  const handleRefresh = async () => {
+    const latest = await getNoteById(noteId);
+    if (latest) {
+      setNote(latest);
+      if (!isEditing) setEditedText(latest.structured_text);
+    }
+  };
+
   return (
     <SafeAreaView style={styles.container}>
-      <View pointerEvents="none" style={styles.background}>
-        <View style={styles.glowTop} />
-        <View style={styles.glowBottom} />
-      </View>
+      <ScreenBackdrop />
       <Animated.View style={[styles.contentWrapper, { opacity: fadeAnim }]}>
         <View style={styles.header}>
           <Button title="Back" onPress={() => navigation.goBack()} variant="ghost" style={styles.backButton} />
@@ -128,6 +188,14 @@ export const NoteDetailScreen = ({ route, navigation }: any) => {
               <View style={styles.tag}>
                 <Text style={styles.tagText}>{note.content_type}</Text>
               </View>
+              <View
+                style={[
+                  styles.statusPill,
+                  isFailed ? styles.statusFailed : isStaleProcessing ? styles.statusDelayed : styles.statusProcessing,
+                ]}
+              >
+                <Text style={styles.statusText}>{isStaleProcessing ? 'DELAYED' : note.status.toUpperCase()}</Text>
+              </View>
               <Text style={styles.date}>
                 {new Date(note.created_at).toLocaleDateString('en-US', {
                   month: 'long',
@@ -137,6 +205,42 @@ export const NoteDetailScreen = ({ route, navigation }: any) => {
               </Text>
             </View>
           </View>
+
+          {isProcessing && !isStaleProcessing && (
+            <View style={styles.processingBanner}>
+              <Text style={styles.processingBannerText}>Processing speech and extracting recipe notes...</Text>
+            </View>
+          )}
+
+          {isStaleProcessing && (
+            <View style={styles.delayedBanner}>
+              <Text style={styles.delayedTitle}>Processing is taking longer than expected</Text>
+              <Text style={styles.delayedSubtext}>This note has been processing for about {processingMinutes} min.</Text>
+              <View style={styles.delayedActions}>
+                <Button title="Refresh Status" onPress={handleRefresh} variant="secondary" style={styles.delayedActionButton} />
+                <Button
+                  title={retrying ? 'Retrying...' : 'Retry Now'}
+                  onPress={handleRetry}
+                  loading={retrying}
+                  style={styles.delayedActionButton}
+                />
+              </View>
+            </View>
+          )}
+
+          {isFailed && (
+            <View style={styles.errorBanner}>
+              <Text style={styles.errorBannerText}>
+                {note.processing_error || 'The reel could not be processed. Try again.'}
+              </Text>
+              <Button
+                title={retrying ? 'Retrying...' : 'Retry Processing'}
+                onPress={handleRetry}
+                loading={retrying}
+                style={styles.retryButton}
+              />
+            </View>
+          )}
 
           {isEditing ? (
             <TextInput
@@ -149,7 +253,9 @@ export const NoteDetailScreen = ({ route, navigation }: any) => {
             />
           ) : (
             <View style={styles.contentCard}>
-              <Text style={styles.structuredText}>{note.structured_text}</Text>
+              <Text style={styles.structuredText}>
+                {note.structured_text || 'No extracted recipe text yet.'}
+              </Text>
             </View>
           )}
 
@@ -180,29 +286,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: theme.colors.background,
   },
-  background: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  glowTop: {
-    position: 'absolute',
-    width: 320,
-    height: 320,
-    borderRadius: 160,
-    backgroundColor: theme.colors.primarySoft,
-    top: -160,
-    right: -120,
-    opacity: 0.9,
-  },
-  glowBottom: {
-    position: 'absolute',
-    width: 360,
-    height: 360,
-    borderRadius: 180,
-    backgroundColor: theme.colors.accentSoft,
-    bottom: -210,
-    left: -150,
-    opacity: 0.8,
-  },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -231,8 +314,8 @@ const styles = StyleSheet.create({
     minHeight: 0,
   },
   titleCard: {
-    backgroundColor: theme.colors.cardElevated,
-    borderRadius: theme.borderRadius.lg,
+    backgroundColor: theme.colors.card,
+    borderRadius: theme.borderRadius.md,
     padding: theme.spacing.lg,
     borderWidth: 1,
     borderColor: theme.colors.borderSoft,
@@ -261,9 +344,83 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 0.6,
   },
+  statusPill: {
+    borderRadius: 999,
+    paddingVertical: 4,
+    paddingHorizontal: theme.spacing.sm,
+    marginHorizontal: theme.spacing.sm,
+  },
+  statusProcessing: {
+    backgroundColor: theme.colors.accentSoft,
+  },
+  statusFailed: {
+    backgroundColor: theme.colors.primarySoft,
+  },
+  statusDelayed: {
+    backgroundColor: 'rgba(255, 179, 71, 0.18)',
+  },
+  statusText: {
+    ...theme.typography.caption,
+    color: theme.colors.text,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
   date: {
     ...theme.typography.caption,
     color: theme.colors.textSubtle,
+  },
+  processingBanner: {
+    backgroundColor: theme.colors.card,
+    borderWidth: 1,
+    borderColor: theme.colors.borderSoft,
+    borderRadius: theme.borderRadius.lg,
+    marginBottom: theme.spacing.md,
+    padding: theme.spacing.md,
+  },
+  processingBannerText: {
+    ...theme.typography.body,
+    color: theme.colors.textMuted,
+  },
+  delayedBanner: {
+    backgroundColor: 'rgba(255, 179, 71, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 179, 71, 0.35)',
+    borderRadius: theme.borderRadius.lg,
+    marginBottom: theme.spacing.md,
+    padding: theme.spacing.md,
+  },
+  delayedTitle: {
+    ...theme.typography.heading,
+    color: '#FFB347',
+    marginBottom: theme.spacing.xs,
+  },
+  delayedSubtext: {
+    ...theme.typography.body,
+    color: theme.colors.textMuted,
+    marginBottom: theme.spacing.sm,
+  },
+  delayedActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  delayedActionButton: {
+    marginRight: theme.spacing.sm,
+  },
+  errorBanner: {
+    backgroundColor: theme.colors.card,
+    borderWidth: 1,
+    borderColor: theme.colors.primary,
+    borderRadius: theme.borderRadius.lg,
+    marginBottom: theme.spacing.md,
+    padding: theme.spacing.md,
+  },
+  errorBannerText: {
+    ...theme.typography.body,
+    color: theme.colors.textMuted,
+    marginBottom: theme.spacing.sm,
+  },
+  retryButton: {
+    alignSelf: 'flex-start',
   },
   structuredText: {
     ...theme.typography.body,
@@ -273,8 +430,8 @@ const styles = StyleSheet.create({
   textInput: {
     ...theme.typography.body,
     color: theme.colors.text,
-    backgroundColor: theme.colors.cardElevated,
-    borderRadius: theme.borderRadius.lg,
+    backgroundColor: theme.colors.card,
+    borderRadius: theme.borderRadius.md,
     padding: theme.spacing.lg,
     minHeight: 200,
     textAlignVertical: 'top',
@@ -283,8 +440,8 @@ const styles = StyleSheet.create({
     ...theme.shadows.soft,
   },
   contentCard: {
-    backgroundColor: theme.colors.cardElevated,
-    borderRadius: theme.borderRadius.lg,
+    backgroundColor: theme.colors.card,
+    borderRadius: theme.borderRadius.md,
     padding: theme.spacing.lg,
     borderWidth: 1,
     borderColor: theme.colors.borderSoft,
@@ -293,8 +450,8 @@ const styles = StyleSheet.create({
   metaSection: {
     marginTop: theme.spacing.lg,
     padding: theme.spacing.md,
-    backgroundColor: theme.colors.cardElevated,
-    borderRadius: theme.borderRadius.lg,
+    backgroundColor: theme.colors.card,
+    borderRadius: theme.borderRadius.md,
     borderWidth: 1,
     borderColor: theme.colors.borderSoft,
     ...theme.shadows.soft,

@@ -8,7 +8,7 @@ Transform Instagram Reels into organized, searchable notes with AI-powered extra
 
 ## ✨ Features
 
-- **🔗 Auto-Extraction** - Paste Instagram reel links and get instant caption extraction
+- **🔗 Async Reel Processing** - Paste Instagram links and queue background speech extraction
 - **🤖 AI Formatting** - Groq AI structures content with sections, bullets, and emojis
 - **🎨 Dark Theme** - Sleek black & red interface optimized for readability
 - **📝 Smart Notes** - Auto-detects content type (Recipe, Workout, Travel, etc.)
@@ -70,12 +70,13 @@ supabase login
 # Link to your project
 supabase link --project-ref YOUR_PROJECT_REF
 
-# Deploy extraction function
+# Deploy edge functions
 cd ../supabase
-supabase functions deploy extract-reel
+supabase functions deploy enqueue-reel
+supabase functions deploy get-reel-status
 
-# Set RapidAPI key for Instagram scraping
-supabase secrets set RAPID_API_KEY=your_rapidapi_key
+# Set service role key for edge function DB writes
+supabase secrets set SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 ```
 
 ### 3. Get API Keys
@@ -87,12 +88,11 @@ supabase secrets set RAPID_API_KEY=your_rapidapi_key
 3. Create API key
 4. Copy key (starts with `gsk_`)
 
-#### RapidAPI (For Instagram Extraction)
+#### Groq + Open-Source Worker
 
-1. Visit [rapidapi.com](https://rapidapi.com)
-2. Search for "Instagram Downloader V2"
-3. Subscribe to free tier
-4. Copy API key
+1. Use Groq free API key for recipe extraction
+2. Use a Python worker with `yt-dlp`, `ffmpeg`, and `faster-whisper` for speech
+3. Host worker online and connect it to Supabase
 
 ### 4. Configure Environment
 
@@ -104,10 +104,13 @@ EXPO_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 EXPO_PUBLIC_SUPABASE_KEY=your_supabase_anon_key
 ```
 
-Create `supabase/.env.local`:
+Create `worker/.env`:
 
 ```env
-RAPID_API_KEY=your_rapidapi_key_here
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+GROQ_API_KEY=gsk_your_groq_key_here
+WORKER_SECRET=your_worker_secret
 ```
 
 ### 5. Run the App
@@ -156,7 +159,7 @@ Auto-detected categories:
 ### Backend
 - **Supabase** (database & edge functions)
 - **Groq AI** (LLaMA 3.3 70B)
-- **RapidAPI** (Instagram scraping)
+- **yt-dlp + ffmpeg + faster-whisper** (speech extraction)
 
 ### Architecture
 ```
@@ -172,7 +175,8 @@ ReelNotes/
 │   └── package.json
 └── supabase/
     ├── functions/
-    │   └── extract-reel/  # Edge function for extraction
+    │   ├── enqueue-reel/  # Queue reel for async processing
+    │   └── get-reel-status/
     ├── schema.sql         # Database schema
     └── .env.local         # Function secrets
 ```
@@ -215,10 +219,10 @@ eas build --platform ios --profile preview
 - Restart Expo dev server after changing `.env`
 - Verify Supabase anon key is correct
 
-### Extraction Not Working
-- Ensure Edge Function is deployed: `supabase functions list`
-- Check RapidAPI subscription is active
-- View function logs: Check Supabase dashboard
+### Processing Not Working
+- Ensure edge functions are deployed: `supabase functions list`
+- Ensure Python worker is running and can call Supabase
+- View function logs in Supabase dashboard and worker logs in your host
 
 ### App Won't Open in Expo Go
 - Run `npx expo-doctor` to check for issues
@@ -242,7 +246,7 @@ MIT License - feel free to use this project for personal or commercial purposes.
 - **Groq** for blazing-fast AI inference
 - **Supabase** for backend infrastructure
 - **Expo** for React Native development platform
-- **RapidAPI** for Instagram scraping services
+- **Open-source tooling** (`yt-dlp`, `ffmpeg`, `faster-whisper`) for speech extraction
 
 ## 📞 Support
 

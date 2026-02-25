@@ -21,13 +21,16 @@ export const supabase = (supabaseUrl && supabaseKey)
 const normalizeNote = (note: any): Note => ({
   ...note,
   title: normalizeText(note?.title, 'Untitled Note'),
-  content_type: normalizeText(note?.content_type, 'Other'),
+  content_type: normalizeText(note?.content_type, 'Recipe'),
   structured_text: normalizeText(note?.structured_text, ''),
+  status: normalizeText(note?.status, 'queued') as Note['status'],
 });
 
-export const extractReelContent = async (url: string): Promise<{ transcript?: string; ocr?: string; error?: string }> => {
+const hasMeaningfulText = (value: unknown): boolean => normalizeText(value, '').trim().length > 0;
+
+export const enqueueReel = async (url: string): Promise<{ reelId?: number; status?: Note['status']; error?: string }> => {
   try {
-    const { data, error } = await supabase.functions.invoke('extract-reel', {
+    const { data, error } = await supabase.functions.invoke('enqueue-reel', {
       body: { url },
     });
 
@@ -36,10 +39,49 @@ export const extractReelContent = async (url: string): Promise<{ transcript?: st
       return { error: error.message };
     }
 
-    return data;
+    return {
+      reelId: data?.reelId,
+      status: data?.status,
+    };
   } catch (err: any) {
-    console.error('Extract reel error:', err);
-    return { error: err.message || 'Failed to extract reel content' };
+    if (err?.name === 'FunctionsHttpError' && err?.context) {
+      try {
+        const body = await err.context.json();
+        console.error('Enqueue reel HTTP error body:', body);
+        return { error: body?.error || 'Edge Function returned an HTTP error' };
+      } catch (_parseErr) {
+        console.error('Enqueue reel HTTP error (unparsed body):', err);
+      }
+    }
+    console.error('Enqueue reel error:', err);
+    return { error: err.message || 'Failed to queue reel processing' };
+  }
+};
+
+export const retryReelProcessing = async (reelId: number): Promise<{ status?: string; error?: string }> => {
+  try {
+    const { data, error } = await supabase.functions.invoke('enqueue-reel', {
+      body: { reelId, retry: true },
+    });
+
+    if (error) {
+      console.error('Retry function error:', error);
+      return { error: error.message };
+    }
+
+    return { status: data?.status };
+  } catch (err: any) {
+    if (err?.name === 'FunctionsHttpError' && err?.context) {
+      try {
+        const body = await err.context.json();
+        console.error('Retry reel HTTP error body:', body);
+        return { error: body?.error || 'Edge Function returned an HTTP error' };
+      } catch (_parseErr) {
+        console.error('Retry reel HTTP error (unparsed body):', err);
+      }
+    }
+    console.error('Retry reel error:', err);
+    return { error: err.message || 'Failed to retry reel processing' };
   }
 };
 
@@ -56,6 +98,25 @@ export const getAllNotes = async (): Promise<Note[]> => {
   }
 
   return (data || []).map(normalizeNote);
+};
+
+export const getNotesPage = async (page: number, pageSize: number): Promise<{ notes: Note[]; hasMore: boolean }> => {
+  const from = page * pageSize;
+  const to = from + pageSize - 1;
+
+  const { data, error } = await supabase
+    .from('reels')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .range(from, to);
+
+  if (error) {
+    console.error('Error fetching notes page:', error);
+    return { notes: [], hasMore: false };
+  }
+
+  const notes = (data || []).map(normalizeNote);
+  return { notes, hasMore: notes.length === pageSize };
 };
 
 export const getNoteById = async (id: number): Promise<Note | null> => {
@@ -88,12 +149,42 @@ export const searchNotes = async (query: string): Promise<Note[]> => {
   return (data || []).map(normalizeNote);
 };
 
+export const searchNotesPage = async (query: string, page: number, pageSize: number): Promise<{ notes: Note[]; hasMore: boolean }> => {
+  const from = page * pageSize;
+  const to = from + pageSize - 1;
+
+  const { data, error } = await supabase
+    .from('reels')
+    .select('*')
+    .or(`title.ilike.%${query}%,structured_text.ilike.%${query}%`)
+    .order('created_at', { ascending: false })
+    .range(from, to);
+
+  if (error) {
+    console.error('Error searching notes page:', error);
+    return { notes: [], hasMore: false };
+  }
+
+  const notes = (data || []).map(normalizeNote);
+  return { notes, hasMore: notes.length === pageSize };
+};
+
 export const addNote = async (note: Omit<Note, 'id' | 'created_at' | 'updated_at'>): Promise<number | null> => {
+  const normalizedStructuredText = normalizeText(note.structured_text, '');
+  const normalizedStatus = normalizeText(note.status, 'queued');
+
+  // Do not allow saving an empty note as ready.
+  if (normalizedStatus === 'ready' && !hasMeaningfulText(normalizedStructuredText)) {
+    console.warn('Skipping addNote: ready note has empty content.');
+    return null;
+  }
+
   const payload = {
     ...note,
     title: normalizeText(note.title, 'Untitled Note'),
-    content_type: normalizeText(note.content_type, 'Other'),
-    structured_text: normalizeText(note.structured_text, ''),
+    content_type: normalizeText(note.content_type, 'Recipe'),
+    structured_text: normalizedStructuredText,
+    status: normalizedStatus,
   };
 
   const { data, error } = await supabase
@@ -114,7 +205,12 @@ export const updateNote = async (id: number, updates: Partial<Note>): Promise<bo
   const normalizedUpdates: Partial<Note> = { ...updates };
 
   if ('structured_text' in updates) {
-    normalizedUpdates.structured_text = normalizeText(updates.structured_text, '');
+    const nextStructuredText = normalizeText(updates.structured_text, '');
+    if (!hasMeaningfulText(nextStructuredText)) {
+      console.warn('Skipping updateNote: empty content is not allowed.');
+      return false;
+    }
+    normalizedUpdates.structured_text = nextStructuredText;
   }
 
   if ('title' in updates) {
