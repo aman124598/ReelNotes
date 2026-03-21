@@ -1,55 +1,121 @@
 -- ReelNotes Database Schema
 -- Run this in your Supabase SQL Editor
 
--- Create reels table
 CREATE TABLE IF NOT EXISTS reels (
   id BIGSERIAL PRIMARY KEY,
+  owner_id UUID REFERENCES auth.users(id) ON DELETE SET NULL,
   url TEXT NOT NULL,
-  title TEXT NOT NULL,
-  content_type TEXT DEFAULT 'Unspecified',
+  title TEXT NOT NULL DEFAULT 'Processing Reel',
+  content_type TEXT DEFAULT 'Recipe',
   structured_text TEXT DEFAULT '',
   raw_transcript TEXT DEFAULT '',
   raw_ocr TEXT DEFAULT '',
-  status TEXT DEFAULT 'draft' CHECK (status IN ('draft', 'ready')),
+  source_transcript TEXT DEFAULT '',
+  recipe_json JSONB,
+  processing_error TEXT,
+  status TEXT DEFAULT 'queued' CHECK (status IN ('queued', 'processing', 'ready', 'failed')),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Create index on created_at for faster sorting
+ALTER TABLE reels ADD COLUMN IF NOT EXISTS source_transcript TEXT DEFAULT '';
+ALTER TABLE reels ADD COLUMN IF NOT EXISTS recipe_json JSONB;
+ALTER TABLE reels ADD COLUMN IF NOT EXISTS processing_error TEXT;
+ALTER TABLE reels ADD COLUMN IF NOT EXISTS owner_id UUID REFERENCES auth.users(id) ON DELETE SET NULL;
+
+ALTER TABLE reels DROP CONSTRAINT IF EXISTS reels_status_check;
+ALTER TABLE reels ADD CONSTRAINT reels_status_check CHECK (status IN ('queued', 'processing', 'ready', 'failed'));
+
+CREATE TABLE IF NOT EXISTS reel_jobs (
+  id BIGSERIAL PRIMARY KEY,
+  reel_id BIGINT NOT NULL REFERENCES reels(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'processing', 'done', 'failed')),
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
 CREATE INDEX IF NOT EXISTS idx_reels_created_at ON reels(created_at DESC);
-
--- Create index on content_type for filtering
 CREATE INDEX IF NOT EXISTS idx_reels_content_type ON reels(content_type);
+CREATE INDEX IF NOT EXISTS idx_reels_status_created ON reels(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_reels_owner_created ON reels(owner_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_reel_jobs_status_created ON reel_jobs(status, created_at);
 
--- Enable Row Level Security
 ALTER TABLE reels ENABLE ROW LEVEL SECURITY;
+ALTER TABLE reel_jobs ENABLE ROW LEVEL SECURITY;
 
--- Drop existing policies if they exist
-DROP POLICY IF EXISTS "Allow all operations" ON reels;
 DROP POLICY IF EXISTS "Enable read access for all users" ON reels;
 DROP POLICY IF EXISTS "Enable insert for all users" ON reels;
 DROP POLICY IF EXISTS "Enable update for all users" ON reels;
 DROP POLICY IF EXISTS "Enable delete for all users" ON reels;
+DROP POLICY IF EXISTS "Enable read access for all users" ON reel_jobs;
+DROP POLICY IF EXISTS "Enable insert for all users" ON reel_jobs;
+DROP POLICY IF EXISTS "Enable update for all users" ON reel_jobs;
+DROP POLICY IF EXISTS "Enable delete for all users" ON reel_jobs;
+DROP POLICY IF EXISTS "Users can read own reels" ON reels;
+DROP POLICY IF EXISTS "Users can insert own reels" ON reels;
+DROP POLICY IF EXISTS "Users can update own reels" ON reels;
+DROP POLICY IF EXISTS "Users can delete own reels" ON reels;
+DROP POLICY IF EXISTS "Users can read own reel jobs" ON reel_jobs;
+DROP POLICY IF EXISTS "Users can insert own reel jobs" ON reel_jobs;
+DROP POLICY IF EXISTS "Users can update own reel jobs" ON reel_jobs;
+DROP POLICY IF EXISTS "Users can delete own reel jobs" ON reel_jobs;
 
--- Create policies for all operations (adjust for production use)
-CREATE POLICY "Enable read access for all users" ON reels
-  FOR SELECT
-  USING (true);
+CREATE POLICY "Users can read own reels" ON reels
+  FOR SELECT USING (owner_id = auth.uid());
 
-CREATE POLICY "Enable insert for all users" ON reels
-  FOR INSERT
-  WITH CHECK (true);
+CREATE POLICY "Users can insert own reels" ON reels
+  FOR INSERT WITH CHECK (owner_id = auth.uid());
 
-CREATE POLICY "Enable update for all users" ON reels
-  FOR UPDATE
-  USING (true)
-  WITH CHECK (true);
+CREATE POLICY "Users can update own reels" ON reels
+  FOR UPDATE USING (owner_id = auth.uid()) WITH CHECK (owner_id = auth.uid());
 
-CREATE POLICY "Enable delete for all users" ON reels
-  FOR DELETE
-  USING (true);
+CREATE POLICY "Users can delete own reels" ON reels
+  FOR DELETE USING (owner_id = auth.uid());
 
--- Create or replace function to update updated_at timestamp
+CREATE POLICY "Users can read own reel jobs" ON reel_jobs
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM reels r
+      WHERE r.id = reel_jobs.reel_id
+        AND r.owner_id = auth.uid()
+    )
+  );
+
+CREATE POLICY "Users can insert own reel jobs" ON reel_jobs
+  FOR INSERT WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM reels r
+      WHERE r.id = reel_jobs.reel_id
+        AND r.owner_id = auth.uid()
+    )
+  );
+
+CREATE POLICY "Users can update own reel jobs" ON reel_jobs
+  FOR UPDATE USING (
+    EXISTS (
+      SELECT 1 FROM reels r
+      WHERE r.id = reel_jobs.reel_id
+        AND r.owner_id = auth.uid()
+    )
+  ) WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM reels r
+      WHERE r.id = reel_jobs.reel_id
+        AND r.owner_id = auth.uid()
+    )
+  );
+
+CREATE POLICY "Users can delete own reel jobs" ON reel_jobs
+  FOR DELETE USING (
+    EXISTS (
+      SELECT 1 FROM reels r
+      WHERE r.id = reel_jobs.reel_id
+        AND r.owner_id = auth.uid()
+    )
+  );
+
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -58,30 +124,52 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Drop trigger if exists
 DROP TRIGGER IF EXISTS update_reels_updated_at ON reels;
-
--- Create trigger to automatically update updated_at
-CREATE TRIGGER update_reels_updated_at 
+CREATE TRIGGER update_reels_updated_at
   BEFORE UPDATE ON reels
-  FOR EACH ROW 
+  FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
 
--- Insert some sample data (optional)
-INSERT INTO reels (url, title, content_type, structured_text, raw_transcript, status)
-VALUES 
-  (
-    'https://www.instagram.com/reel/sample123/',
-    'Chocolate Chip Cookies Recipe',
-    'Recipe',
-    E'Title: Perfect Chocolate Chip Cookies\nType: Recipe\n\nIngredients:\n- 2 cups flour\n- 1 cup butter\n- 1 cup chocolate chips\n- 2 eggs\n\nInstructions:\n1. Mix dry ingredients\n2. Cream butter and sugar\n3. Add eggs\n4. Fold in chocolate chips\n5. Bake at 350°F for 12 minutes',
-    'Mix flour, butter, chocolate chips, and eggs. Bake for 12 minutes at 350 degrees.',
-    'ready'
-  )
-ON CONFLICT DO NOTHING;
+DROP TRIGGER IF EXISTS update_reel_jobs_updated_at ON reel_jobs;
+CREATE TRIGGER update_reel_jobs_updated_at
+  BEFORE UPDATE ON reel_jobs
+  FOR EACH ROW
+  EXECUTE FUNCTION update_updated_at_column();
 
--- Verify the setup
-SELECT 
-  'Setup complete! ✓' as message,
-  COUNT(*) as total_reels
-FROM reels;
+CREATE OR REPLACE FUNCTION claim_reel_job()
+RETURNS TABLE (
+  job_id BIGINT,
+  reel_id BIGINT,
+  reel_url TEXT,
+  attempt_count INTEGER
+)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RETURN QUERY
+  WITH next_job AS (
+    SELECT rj.id, rj.reel_id, r.url, rj.attempt_count
+    FROM reel_jobs rj
+    JOIN reels r ON r.id = rj.reel_id
+    WHERE rj.status = 'queued'
+    ORDER BY rj.created_at
+    FOR UPDATE SKIP LOCKED
+    LIMIT 1
+  ),
+  updated_job AS (
+    UPDATE reel_jobs rj
+    SET
+      status = 'processing',
+      attempt_count = rj.attempt_count + 1,
+      updated_at = NOW()
+    FROM next_job nj
+    WHERE rj.id = nj.id
+    RETURNING rj.id, rj.reel_id, nj.url, rj.attempt_count
+  )
+  UPDATE reels r
+  SET status = 'processing', processing_error = NULL, updated_at = NOW()
+  FROM updated_job uj
+  WHERE r.id = uj.reel_id
+  RETURNING uj.id, uj.reel_id, uj.url, uj.attempt_count;
+END;
+$$;

@@ -1,85 +1,123 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, FlatList, Alert, Animated } from 'react-native';
+import { View, Text, StyleSheet, FlatList, Alert, Animated, ActivityIndicator, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { NoteCard } from '../components/NoteCard';
 import { SearchBar } from '../components/SearchBar';
 import { Button } from '../components/Button';
-import { getAllNotes, searchNotes, deleteNote } from '../services/supabase';
+import { ScreenBackdrop } from '../components/ScreenBackdrop';
+
+import { getNotesPage, searchNotesPage, deleteNote } from '../services/supabase';
 import { Note } from '../types';
 import { theme } from '../theme';
 
 export const HomeScreen = ({ navigation }: any) => {
+  const PAGE_SIZE = 20;
   const [notes, setNotes] = useState<Note[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [currentPage, setCurrentPage] = useState(0);
+  const [hasMore, setHasMore] = useState(true);
+  const [showScrollTop, setShowScrollTop] = useState(false);
   const fadeAnim = useRef(new Animated.Value(0)).current;
+  const listRef = useRef<FlatList<Note>>(null);
+  const updateScrollTopVisibility = useCallback((yOffset: number) => {
+    setShowScrollTop(yOffset > 360);
+  }, []);
 
   useEffect(() => {
     Animated.timing(fadeAnim, {
       toValue: 1,
-      duration: 450,
+      duration: 420,
       useNativeDriver: true,
     }).start();
   }, [fadeAnim]);
 
-  const loadNotes = async () => {
-    setLoading(true);
+  const loadNotes = async (reset = false) => {
+    const nextPage = reset ? 0 : currentPage;
+
+    if (reset) {
+      if (loading) return;
+      setLoading(true);
+    } else {
+      if (loading || loadingMore || !hasMore) return;
+      setLoadingMore(true);
+    }
+
     try {
+      let batch: { notes: Note[]; hasMore: boolean };
       if (searchQuery.trim()) {
-        const results = await searchNotes(searchQuery);
-        setNotes(results);
+        batch = await searchNotesPage(searchQuery.trim(), nextPage, PAGE_SIZE);
       } else {
-        const results = await getAllNotes();
-        setNotes(results);
+        batch = await getNotesPage(nextPage, PAGE_SIZE);
       }
+
+      setHasMore(batch.hasMore);
+      setCurrentPage(nextPage + 1);
+      setNotes((prev) => (reset ? batch.notes : [...prev, ...batch.notes]));
     } catch (error) {
       console.error('Error loading notes:', error);
     } finally {
-      setLoading(false);
+      if (reset) {
+        setLoading(false);
+      } else {
+        setLoadingMore(false);
+      }
     }
   };
 
   useFocusEffect(
     useCallback(() => {
-      loadNotes();
+      scrollToTop(false);
+      setShowScrollTop(false);
+      setCurrentPage(0);
+      setHasMore(true);
+      setNotes([]);
+      loadNotes(true);
     }, [searchQuery])
   );
 
   const handleDeleteNote = (id: number) => {
-    Alert.alert(
-      'Delete Note',
-      'Are you sure you want to delete this note?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            const success = await deleteNote(id);
-            if (success) {
-              loadNotes();
-            } else {
-              Alert.alert('Error', 'Failed to delete note');
-            }
-          },
+    Alert.alert('Delete Note', 'Are you sure you want to delete this note?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          const success = await deleteNote(id);
+          if (success) {
+            scrollToTop(false);
+            setShowScrollTop(false);
+            setCurrentPage(0);
+            setHasMore(true);
+            setNotes([]);
+            loadNotes(true);
+          } else {
+            Alert.alert('Error', 'Failed to delete note');
+          }
         },
-      ]
-    );
+      },
+    ]);
   };
 
   const noteCount = notes.length;
+  const isListEmpty = noteCount === 0;
+  const processingCount = notes.filter((note) => note.status === 'queued' || note.status === 'processing').length;
+  const failedCount = notes.filter((note) => note.status === 'failed').length;
+  const readyCount = notes.filter((note) => note.status === 'ready').length;
+
+  const scrollToTop = (animated: boolean) => {
+    listRef.current?.scrollToOffset({ offset: 0, animated });
+  };
 
   return (
     <SafeAreaView style={styles.container}>
-      <View pointerEvents="none" style={styles.background}>
-        <View style={styles.glowTop} />
-        <View style={styles.glowBottom} />
-        <View style={styles.ring} />
-      </View>
+      <ScreenBackdrop />
 
       <Animated.View style={[styles.listWrapper, { opacity: fadeAnim }]}>
         <FlatList
+          ref={listRef}
           data={notes}
           renderItem={({ item }) => (
             <NoteCard
@@ -90,66 +128,97 @@ export const HomeScreen = ({ navigation }: any) => {
           )}
           keyExtractor={(item) => item.id.toString()}
           style={styles.list}
-        contentContainerStyle={styles.listContent}
-          showsVerticalScrollIndicator={false}
+          contentContainerStyle={isListEmpty ? styles.listContentEmpty : styles.listContent}
+          showsVerticalScrollIndicator
+          scrollEnabled
+          onScroll={(event) => {
+            const y = event.nativeEvent.contentOffset.y;
+            updateScrollTopVisibility(y);
+          }}
+          scrollEventThrottle={16}
           ListHeaderComponent={
             <View>
-              <View style={styles.hero}>
-                <View style={styles.badgeRow}>
-                  <View style={styles.badge}>
-                    <Text style={styles.badgeText}>Reel</Text>
-                  </View>
-                  <View style={styles.badgeDot} />
-                  <View style={styles.badge}>
-                    <Text style={styles.badgeText}>Notes</Text>
-                  </View>
-                </View>
-
-                <Text style={styles.title}>ReelNotes</Text>
+              <View style={styles.heroCard}>
+                <Text style={styles.appBrand}>ReelNotes</Text>
+                <Text style={styles.title}>Recipe Notes</Text>
                 <Text style={styles.subtitle}>
-                  Turn reels into sharp, searchable notes for your personal library.
+                  Capture reel insights with a calm workspace, quick extraction, and compact cards made for one-handed use.
                 </Text>
-
-                <View style={styles.actionsRow}>
-                  <Button
-                    title="New Note"
-                    onPress={() => navigation.navigate('AddNote')}
-                    style={styles.newButton}
-                  />
+                <View style={styles.heroActionRow}>
                   <View style={styles.countPill}>
-                    <Text style={styles.countText}>
-                      {noteCount} {noteCount === 1 ? 'note' : 'notes'}
-                    </Text>
+                    <Text style={styles.countText}>{noteCount} saved</Text>
                   </View>
+                  <Button
+                    title="Add New Note"
+                    variant="primary"
+                    style={styles.addNewButton}
+                    onPress={() => navigation.navigate('AddNote')}
+                  />
                 </View>
               </View>
 
-              <SearchBar value={searchQuery} onChangeText={setSearchQuery} />
+              <SearchBar value={searchQuery} onChangeText={setSearchQuery} placeholder="Search titles, tags, or notes" />
+
+              <View style={styles.statGrid}>
+                <View style={styles.statCard}>
+                  <Text style={styles.statValue}>{readyCount}</Text>
+                  <Text style={styles.statLabel}>Ready</Text>
+                </View>
+                <View style={styles.statCard}>
+                  <Text style={styles.statValue}>{processingCount}</Text>
+                  <Text style={styles.statLabel}>Processing</Text>
+                </View>
+                <View style={styles.statCard}>
+                  <Text style={styles.statValue}>{failedCount}</Text>
+                  <Text style={styles.statLabel}>Failed</Text>
+                </View>
+              </View>
 
               <View style={styles.sectionHeader}>
-                <Text style={styles.sectionTitle}>Your Library</Text>
-              <Text style={styles.sectionMeta}>{loading ? 'Updating...' : `${noteCount} total`}</Text>
+                <Text style={styles.sectionTitle}>Library</Text>
+                <Text style={styles.sectionMeta}>{loading ? 'Refreshing' : `${noteCount} total`}</Text>
               </View>
+            </View>
+          }
+          ListFooterComponent={
+            <View style={styles.footerArea}>
+              {loadingMore ? (
+                <View style={styles.footerLoader}>
+                  <ActivityIndicator color={theme.colors.primary} />
+                  <Text style={styles.footerLoaderText}>Loading more notes...</Text>
+                </View>
+              ) : null}
+
+              {!loading && !loadingMore && hasMore && !isListEmpty ? (
+                <View style={styles.loadMoreWrap}>
+                  <Button title="Load More Recipes" onPress={() => loadNotes(false)} />
+                </View>
+              ) : null}
             </View>
           }
           ListEmptyComponent={
             <View style={styles.emptyState}>
               <View style={styles.emptyCard}>
                 <Text style={styles.emptyTitle}>No notes yet</Text>
-                <Text style={styles.emptySubtext}>
-                  Paste a reel link to extract highlights, then save your first note.
-                </Text>
-                <Button
-                  title="Create First Note"
-                  variant="secondary"
-                  onPress={() => navigation.navigate('AddNote')}
-                  style={styles.emptyButton}
-                />
+                <Text style={styles.emptySubtext}>Start with a reel URL or write your own manual note in seconds.</Text>
+                <Button title="Create Your First Note" onPress={() => navigation.navigate('AddNote')} />
               </View>
             </View>
           }
         />
       </Animated.View>
+
+      {showScrollTop ? (
+        <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel="Scroll to top"
+          style={styles.scrollTopButton}
+          onPress={() => scrollToTop(true)}
+        >
+          <Text style={styles.scrollTopButtonText}>↑</Text>
+        </TouchableOpacity>
+      ) : null}
+
     </SafeAreaView>
   );
 };
@@ -159,44 +228,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: theme.colors.background,
   },
-  background: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  glowTop: {
-    position: 'absolute',
-    width: 320,
-    height: 320,
-    borderRadius: 160,
-    backgroundColor: theme.colors.primarySoft,
-    top: -140,
-    right: -100,
-    opacity: 0.9,
-  },
-  glowBottom: {
-    position: 'absolute',
-    width: 380,
-    height: 380,
-    borderRadius: 190,
-    backgroundColor: theme.colors.accentSoft,
-    bottom: -200,
-    left: -140,
-    opacity: 0.8,
-  },
-  ring: {
-    position: 'absolute',
-    width: 220,
-    height: 220,
-    borderRadius: 110,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.06)',
-    top: 120,
-    left: -60,
-  },
-  listContent: {
-    paddingHorizontal: theme.spacing.lg,
-    paddingBottom: theme.spacing.xxl,
-    flexGrow: 1,
-  },
   list: {
     flex: 1,
     minHeight: 0,
@@ -205,35 +236,31 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 0,
   },
-  hero: {
-    marginTop: theme.spacing.lg,
-    marginBottom: theme.spacing.lg,
+  listContent: {
+    paddingHorizontal: theme.spacing.lg,
+    paddingTop: theme.spacing.xs,
+    paddingBottom: 120,
+    flexGrow: 1,
   },
-  badgeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: theme.spacing.sm,
+  listContentEmpty: {
+    paddingHorizontal: theme.spacing.lg,
+    paddingTop: theme.spacing.xs,
+    paddingBottom: 120,
+    flexGrow: 1,
   },
-  badge: {
-    backgroundColor: theme.colors.cardElevated,
-    borderRadius: 999,
-    paddingHorizontal: theme.spacing.sm,
-    paddingVertical: 4,
+  heroCard: {
+    backgroundColor: 'rgba(255,255,255,0.68)',
+    borderRadius: theme.borderRadius.lg,
+    padding: theme.spacing.lg,
     borderWidth: 1,
     borderColor: theme.colors.borderSoft,
+    marginBottom: theme.spacing.lg,
   },
-  badgeText: {
+  appBrand: {
     ...theme.typography.caption,
-    color: theme.colors.textMuted,
-    textTransform: 'uppercase',
+    color: theme.colors.accent,
     letterSpacing: 1,
-  },
-  badgeDot: {
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: theme.colors.primary,
-    marginHorizontal: theme.spacing.sm,
+    marginBottom: theme.spacing.xs,
   },
   title: {
     ...theme.typography.display,
@@ -243,35 +270,60 @@ const styles = StyleSheet.create({
     ...theme.typography.body,
     color: theme.colors.textMuted,
     marginTop: theme.spacing.sm,
-    maxWidth: 320,
   },
-  actionsRow: {
+  heroActionRow: {
+    marginTop: theme.spacing.lg,
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: theme.spacing.lg,
+    gap: theme.spacing.sm,
+    flexWrap: 'wrap',
   },
-  newButton: {
-    marginRight: theme.spacing.sm,
+  addNewButton: {
+    minHeight: 40,
+    paddingVertical: 8,
   },
   countPill: {
-    paddingVertical: theme.spacing.xs,
-    paddingHorizontal: theme.spacing.md,
+    backgroundColor: 'rgba(255,255,255,0.9)',
     borderRadius: 999,
-    backgroundColor: theme.colors.card,
     borderWidth: 1,
     borderColor: theme.colors.borderSoft,
+    paddingVertical: 7,
+    paddingHorizontal: theme.spacing.md,
   },
   countText: {
     ...theme.typography.caption,
     color: theme.colors.textMuted,
     textTransform: 'uppercase',
-    letterSpacing: 0.6,
+  },
+  statGrid: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: theme.spacing.lg,
+  },
+  statCard: {
+    width: '31%',
+    backgroundColor: 'rgba(255,255,255,0.75)',
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: 1,
+    borderColor: theme.colors.borderSoft,
+    paddingVertical: theme.spacing.md,
+    alignItems: 'center',
+  },
+  statValue: {
+    ...theme.typography.title,
+    color: theme.colors.text,
+  },
+  statLabel: {
+    ...theme.typography.caption,
+    color: theme.colors.textSubtle,
+    marginTop: 2,
+    textTransform: 'uppercase',
   },
   sectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
     marginBottom: theme.spacing.sm,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
   sectionTitle: {
     ...theme.typography.heading,
@@ -282,15 +334,16 @@ const styles = StyleSheet.create({
     color: theme.colors.textSubtle,
   },
   emptyState: {
-    paddingVertical: theme.spacing.xl,
+    flex: 1,
+    justifyContent: 'center',
+    paddingTop: theme.spacing.md,
   },
   emptyCard: {
-    backgroundColor: theme.colors.cardElevated,
+    backgroundColor: 'rgba(255,255,255,0.74)',
     borderRadius: theme.borderRadius.lg,
-    padding: theme.spacing.lg,
     borderWidth: 1,
     borderColor: theme.colors.borderSoft,
-    ...theme.shadows.soft,
+    padding: theme.spacing.lg,
   },
   emptyTitle: {
     ...theme.typography.title,
@@ -302,7 +355,38 @@ const styles = StyleSheet.create({
     color: theme.colors.textMuted,
     marginBottom: theme.spacing.lg,
   },
-  emptyButton: {
-    alignSelf: 'flex-start',
+  footerLoader: {
+    paddingVertical: theme.spacing.lg,
+    alignItems: 'center',
+  },
+  footerArea: {
+    paddingBottom: theme.spacing.sm,
+  },
+  footerLoaderText: {
+    ...theme.typography.caption,
+    color: theme.colors.textSubtle,
+    marginTop: 4,
+  },
+  loadMoreWrap: {
+    paddingTop: theme.spacing.sm,
+  },
+  scrollTopButton: {
+    position: 'absolute',
+    right: theme.spacing.lg,
+    bottom: 24,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(255,255,255,0.92)',
+    borderWidth: 1,
+    borderColor: theme.colors.borderSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...theme.shadows.soft,
+  },
+  scrollTopButtonText: {
+    ...theme.typography.title,
+    color: theme.colors.text,
+    lineHeight: 20,
   },
 });

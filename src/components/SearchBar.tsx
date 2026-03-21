@@ -33,14 +33,13 @@ const styles = StyleSheet.create({
   container: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: theme.colors.cardElevated,
+    backgroundColor: 'rgba(255,255,255,0.76)',
     borderRadius: theme.borderRadius.lg,
     borderWidth: 1,
     borderColor: theme.colors.borderSoft,
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.sm,
-    marginBottom: theme.spacing.md,
-    ...theme.shadows.soft,
+    paddingHorizontal: theme.spacing.lg,
+    paddingVertical: 11,
+    marginBottom: theme.spacing.lg,
   },
   icon: {
     width: 18,
@@ -49,9 +48,9 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   iconCircle: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
+    width: 13,
+    height: 13,
+    borderRadius: 7,
     borderWidth: 2,
     borderColor: theme.colors.textMuted,
   },
@@ -69,5 +68,6 @@ const styles = StyleSheet.create({
     flex: 1,
     color: theme.colors.text,
     ...theme.typography.body,
+    paddingVertical: 1,
   },
 });

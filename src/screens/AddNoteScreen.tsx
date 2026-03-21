@@ -7,35 +7,30 @@ import {
   TextInput,
   Alert,
   Animated,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
 import { Button } from '../components/Button';
+import { ScreenBackdrop } from '../components/ScreenBackdrop';
 import { addNote } from '../services/supabase';
-import { extractReelContent } from '../services/supabase';
-import { formatWithGroq } from '../services/groq';
+import { enqueueReel } from '../services/supabase';
 import { theme } from '../theme';
-import { normalizeText } from '../utils/text';
 
 export const AddNoteScreen = ({ navigation }: any) => {
   const [url, setUrl] = useState('');
+  const [manualTitle, setManualTitle] = useState('');
+  const [manualBody, setManualBody] = useState('');
   const [loading, setLoading] = useState(false);
+  const [manualSaving, setManualSaving] = useState(false);
   const fadeAnim = useRef(new Animated.Value(0)).current;
-  const [extractedData, setExtractedData] = useState<{
-    title: string;
-    contentType: string;
-    structuredText: string;
-    transcript?: string;
-  } | null>(null);
-
-  const previewTitle = extractedData ? normalizeText(extractedData.title, 'Untitled Note') : '';
-  const previewContentType = extractedData ? normalizeText(extractedData.contentType, 'Other') : '';
-  const previewText = extractedData ? normalizeText(extractedData.structuredText, '') : '';
+  const scrollRef = useRef<ScrollView | null>(null);
 
   useEffect(() => {
     Animated.timing(fadeAnim, {
       toValue: 1,
-      duration: 450,
+      duration: 420,
       useNativeDriver: true,
     }).start();
   }, [fadeAnim]);
@@ -47,13 +42,13 @@ export const AddNoteScreen = ({ navigation }: any) => {
     }
   };
 
-  const validateInstagramUrl = (url: string): boolean => {
+  const validateInstagramUrl = (value: string): boolean => {
     const patterns = [
       /instagram\.com\/reel\/[A-Za-z0-9_-]+/,
       /instagram\.com\/p\/[A-Za-z0-9_-]+/,
       /instagram\.com\/tv\/[A-Za-z0-9_-]+/,
     ];
-    return patterns.some(pattern => pattern.test(url));
+    return patterns.some((pattern) => pattern.test(value));
   };
 
   const handleExtract = async () => {
@@ -70,73 +65,37 @@ export const AddNoteScreen = ({ navigation }: any) => {
     setLoading(true);
 
     try {
-      // Extract content from Instagram
-      const { transcript, ocr, error } = await extractReelContent(url);
-
-      if (error) {
-        Alert.alert('Extraction Error', error);
+      const { reelId, error } = await enqueueReel(url.trim());
+      if (error || !reelId) {
+        Alert.alert('Queue Error', error || 'Failed to queue reel processing');
         setLoading(false);
         return;
       }
 
-      const content = transcript || ocr || '';
-
-      if (!content) {
-        Alert.alert('No Content', 'Could not extract content from this reel. You can still create a note manually.');
-        setLoading(false);
-        return;
-      }
-
-      // Format with Groq AI
-      const formatted = await formatWithGroq(content);
-
-      setExtractedData({
-        ...formatted,
-        transcript: content,
-      });
-
-      Alert.alert('Success', 'Content extracted and formatted!');
+      navigation.replace('NoteDetail', { noteId: reelId });
     } catch (err: any) {
-      Alert.alert('Error', err.message || 'Failed to extract content');
+      Alert.alert('Error', err.message || 'Failed to queue reel processing');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSave = async () => {
-    if (!extractedData) {
-      Alert.alert('Error', 'Please extract content first');
+  const handleManualCreate = async () => {
+    const cleanTitle = manualTitle.trim();
+    const cleanBody = manualBody.trim();
+
+    if (!cleanBody) {
+      Alert.alert('Manual Note', 'Please add note content before saving.');
       return;
     }
 
+    setManualSaving(true);
     const noteId = await addNote({
-      url: url.trim(),
-      title: previewTitle || 'Untitled Note',
-      content_type: previewContentType || 'Other',
-      structured_text: previewText,
-      raw_transcript: extractedData.transcript,
-      status: 'ready',
-    });
-
-    if (noteId) {
-      Alert.alert('Success', 'Note saved!', [
-        {
-          text: 'OK',
-          onPress: () => navigation.replace('NoteDetail', { noteId }),
-        },
-      ]);
-    } else {
-      Alert.alert('Error', 'Failed to save note');
-    }
-  };
-
-  const handleManualCreate = async () => {
-    const noteId = await addNote({
-      url: url.trim() || 'Manual Entry',
-      title: 'Untitled Note',
+      url: 'Manual Entry',
+      title: cleanTitle || cleanBody.split('\n')[0].slice(0, 60) || 'Untitled Note',
       content_type: 'Other',
-      structured_text: '',
-      status: 'draft',
+      structured_text: cleanBody,
+      status: 'ready',
     });
 
     if (noteId) {
@@ -144,93 +103,100 @@ export const AddNoteScreen = ({ navigation }: any) => {
     } else {
       Alert.alert('Error', 'Failed to create note');
     }
+
+    setManualSaving(false);
+  };
+
+  const bringManualSectionIntoView = () => {
+    setTimeout(() => {
+      scrollRef.current?.scrollToEnd({ animated: true });
+    }, 120);
   };
 
   return (
     <SafeAreaView style={styles.container}>
-      <View pointerEvents="none" style={styles.background}>
-        <View style={styles.glowTop} />
-        <View style={styles.glowBottom} />
-      </View>
+      <ScreenBackdrop />
 
-      <Animated.View style={[styles.contentWrapper, { opacity: fadeAnim }]}>
-        <View style={styles.header}>
-          <Button
-            title="Back"
-            onPress={() => navigation.goBack()}
-            variant="ghost"
-            style={styles.backButton}
-          />
-          <View style={styles.headerText}>
-            <Text style={styles.headerTitle}>New Note</Text>
-            <Text style={styles.headerSubtitle}>Extract a reel and save the highlights.</Text>
+      <KeyboardAvoidingView
+        style={styles.keyboardWrapper}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}
+      >
+        <Animated.View style={[styles.contentWrapper, { opacity: fadeAnim }]}>
+          <View style={styles.header}>
+            <Button title="Back" onPress={() => navigation.goBack()} variant="ghost" style={styles.backButton} />
+            <View style={styles.headerTextWrap}>
+              <Text style={styles.headerEyebrow}>NEW CAPTURE</Text>
+              <Text style={styles.headerTitle}>Add A Note</Text>
+            </View>
+            <View style={styles.headerSpacer} />
           </View>
-          <View style={styles.headerSpacer} />
-        </View>
 
-        <ScrollView
-          style={styles.content}
-          contentContainerStyle={styles.contentContainer}
-          showsVerticalScrollIndicator={false}
-        >
-          <View style={styles.section}>
-            <Text style={styles.label}>Instagram Link</Text>
-            <View style={styles.inputRow}>
+          <ScrollView
+            ref={scrollRef}
+            style={styles.content}
+            contentContainerStyle={styles.contentContainer}
+            showsVerticalScrollIndicator={Platform.OS === 'web'}
+            keyboardShouldPersistTaps="handled"
+          >
+            <View style={styles.sectionCard}>
+              <Text style={styles.sectionTitle}>Instagram Reel Link</Text>
+              <Text style={styles.sectionDescription}>Paste any reel, post, or IGTV URL and let ReelNotes extract the essentials.</Text>
+              <View style={styles.inputRow}>
+                <TextInput
+                  style={styles.linkInput}
+                  value={url}
+                  onChangeText={setUrl}
+                  placeholder="https://www.instagram.com/reel/..."
+                  placeholderTextColor={theme.colors.textMuted}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="url"
+                  textContentType="URL"
+                  autoComplete="url"
+                  returnKeyType="go"
+                />
+                <Button title="Paste" onPress={handlePasteFromClipboard} variant="secondary" style={styles.pasteButton} />
+              </View>
+              <Button title={loading ? 'Queueing...' : 'Extract From Reel'} onPress={handleExtract} loading={loading} />
+            </View>
+
+            <View style={styles.separatorWrap}>
+              <View style={styles.separatorLine} />
+              <Text style={styles.separatorText}>OR WRITE IT MANUALLY</Text>
+              <View style={styles.separatorLine} />
+            </View>
+
+            <View style={styles.sectionCard}>
+              <Text style={styles.sectionTitle}>Manual Note</Text>
               <TextInput
-                style={styles.input}
-                value={url}
-                onChangeText={setUrl}
-                placeholder="https://www.instagram.com/reel/..."
+                style={[styles.input, styles.fieldSpacing]}
+                value={manualTitle}
+                onChangeText={setManualTitle}
+                placeholder="Title"
                 placeholderTextColor={theme.colors.textMuted}
-                autoCapitalize="none"
-                autoCorrect={false}
+                onFocus={bringManualSectionIntoView}
+              />
+              <TextInput
+                style={styles.textArea}
+                value={manualBody}
+                onChangeText={setManualBody}
+                placeholder="Write your recipe notes here..."
+                placeholderTextColor={theme.colors.textMuted}
+                multiline
+                textAlignVertical="top"
+                onFocus={bringManualSectionIntoView}
               />
               <Button
-                title="Paste"
-                onPress={handlePasteFromClipboard}
+                title={manualSaving ? 'Saving...' : 'Create Manual Note'}
+                onPress={handleManualCreate}
                 variant="secondary"
-                style={styles.pasteButton}
+                loading={manualSaving}
               />
             </View>
-            <Text style={styles.helperText}>We support reels, posts, and IGTV links.</Text>
-          </View>
-
-          <Button
-            title={loading ? 'Extracting...' : 'Extract Content'}
-            onPress={handleExtract}
-            loading={loading}
-            style={styles.extractButton}
-          />
-
-          {extractedData && (
-            <View style={styles.previewSection}>
-              <Text style={styles.previewLabel}>Preview</Text>
-
-              <View style={styles.previewCard}>
-              <Text style={styles.previewTitle}>{previewTitle}</Text>
-              <Text style={styles.previewContentType}>{previewContentType}</Text>
-              <Text style={styles.previewText} numberOfLines={10}>
-                {previewText}
-              </Text>
-            </View>
-
-              <Button title="Save Note" onPress={handleSave} style={styles.saveButton} />
-            </View>
-          )}
-
-          <View style={styles.divider}>
-            <View style={styles.dividerLine} />
-            <Text style={styles.dividerText}>OR</Text>
-            <View style={styles.dividerLine} />
-          </View>
-
-          <Button
-            title="Create Manual Note"
-            onPress={handleManualCreate}
-            variant="secondary"
-          />
-        </ScrollView>
-      </Animated.View>
+          </ScrollView>
+        </Animated.View>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 };
@@ -240,159 +206,125 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: theme.colors.background,
   },
-  background: {
-    ...StyleSheet.absoluteFillObject,
+  keyboardWrapper: {
+    flex: 1,
   },
-  glowTop: {
-    position: 'absolute',
-    width: 300,
-    height: 300,
-    borderRadius: 150,
-    backgroundColor: theme.colors.primarySoft,
-    top: -160,
-    right: -120,
-    opacity: 0.9,
-  },
-  glowBottom: {
-    position: 'absolute',
-    width: 360,
-    height: 360,
-    borderRadius: 180,
-    backgroundColor: theme.colors.accentSoft,
-    bottom: -200,
-    left: -140,
-    opacity: 0.8,
+  contentWrapper: {
+    flex: 1,
   },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
     paddingHorizontal: theme.spacing.lg,
     paddingTop: theme.spacing.lg,
     paddingBottom: theme.spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
   backButton: {
-    paddingHorizontal: theme.spacing.md,
-    minHeight: 36,
+    minWidth: 76,
   },
-  headerText: {
+  headerTextWrap: {
     flex: 1,
-    marginLeft: theme.spacing.sm,
+    marginLeft: theme.spacing.md,
   },
-  headerSpacer: {
-    width: 40,
+  headerEyebrow: {
+    ...theme.typography.caption,
+    color: theme.colors.accent,
+    letterSpacing: 1,
   },
   headerTitle: {
     ...theme.typography.title,
     color: theme.colors.text,
   },
-  headerSubtitle: {
-    ...theme.typography.body,
-    color: theme.colors.textMuted,
-    marginTop: 2,
+  headerSpacer: {
+    width: 72,
   },
   content: {
     flex: 1,
   },
-  contentWrapper: {
-    flex: 1,
-    minHeight: 0,
-  },
   contentContainer: {
     paddingHorizontal: theme.spacing.lg,
     paddingBottom: theme.spacing.xxl,
-    flexGrow: 1,
   },
-  section: {
-    marginBottom: theme.spacing.md,
+  sectionCard: {
+    backgroundColor: 'rgba(255,255,255,0.72)',
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: 1,
+    borderColor: theme.colors.borderSoft,
+    padding: theme.spacing.md,
+    marginBottom: theme.spacing.lg,
   },
-  label: {
-    ...theme.typography.body,
+  sectionTitle: {
+    ...theme.typography.heading,
     color: theme.colors.text,
-    marginBottom: theme.spacing.sm,
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
+    marginBottom: 6,
+  },
+  sectionDescription: {
+    ...theme.typography.body,
+    color: theme.colors.textMuted,
+    marginBottom: theme.spacing.md,
   },
   inputRow: {
     flexDirection: 'row',
+    alignItems: 'stretch',
     marginBottom: theme.spacing.md,
+  },
+  linkInput: {
+    flex: 1,
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: 'rgba(255,255,255,0.98)',
+    paddingHorizontal: theme.spacing.md,
+    paddingVertical: 12,
+    color: theme.colors.text,
+    ...theme.typography.body,
   },
   input: {
     flex: 1,
-    backgroundColor: theme.colors.cardElevated,
     borderRadius: theme.borderRadius.lg,
-    padding: theme.spacing.md,
-    color: theme.colors.text,
-    ...theme.typography.body,
     borderWidth: 1,
     borderColor: theme.colors.borderSoft,
+    backgroundColor: 'rgba(255,255,255,0.95)',
+    paddingHorizontal: theme.spacing.md,
+    paddingVertical: 12,
+    color: theme.colors.text,
+    ...theme.typography.body,
+  },
+  fieldSpacing: {
+    marginBottom: theme.spacing.md,
   },
   pasteButton: {
     marginLeft: theme.spacing.sm,
-    paddingHorizontal: theme.spacing.md,
-    minWidth: 80,
+    minWidth: 84,
+    alignSelf: 'stretch',
   },
-  helperText: {
-    ...theme.typography.caption,
-    color: theme.colors.textSubtle,
-  },
-  extractButton: {
-    marginBottom: theme.spacing.lg,
-  },
-  previewSection: {
-    marginBottom: theme.spacing.lg,
-  },
-  previewLabel: {
-    ...theme.typography.body,
-    color: theme.colors.text,
-    marginBottom: theme.spacing.sm,
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-  },
-  previewCard: {
-    backgroundColor: theme.colors.cardElevated,
-    borderRadius: theme.borderRadius.lg,
-    padding: theme.spacing.lg,
-    marginBottom: theme.spacing.md,
+  textArea: {
+    borderRadius: theme.borderRadius.md,
     borderWidth: 1,
     borderColor: theme.colors.borderSoft,
-    ...theme.shadows.soft,
-  },
-  previewTitle: {
-    ...theme.typography.heading,
+    backgroundColor: 'rgba(255,255,255,0.95)',
+    paddingHorizontal: theme.spacing.md,
+    paddingVertical: theme.spacing.md,
     color: theme.colors.text,
-    marginBottom: theme.spacing.xs,
-  },
-  previewContentType: {
-    ...theme.typography.caption,
-    color: theme.colors.accent,
-    marginBottom: theme.spacing.sm,
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-  },
-  previewText: {
     ...theme.typography.body,
-    color: theme.colors.textMuted,
-  },
-  saveButton: {
+    minHeight: 170,
     marginBottom: theme.spacing.md,
   },
-  divider: {
+  separatorWrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginVertical: theme.spacing.lg,
+    marginBottom: theme.spacing.lg,
   },
-  dividerLine: {
+  separatorLine: {
     flex: 1,
     height: 1,
-    backgroundColor: theme.colors.borderSoft,
-    opacity: 0.7,
+    backgroundColor: theme.colors.border,
   },
-  dividerText: {
+  separatorText: {
     ...theme.typography.caption,
     color: theme.colors.textSubtle,
-    paddingHorizontal: theme.spacing.md,
-    textTransform: 'uppercase',
-    letterSpacing: 1.2,
+    paddingHorizontal: theme.spacing.sm,
+    letterSpacing: 0.7,
   },
 });

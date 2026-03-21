@@ -30,9 +30,9 @@ export const Button: React.FC<ButtonProps> = ({ title, onPress, loading, variant
       disabled={loading}
     >
       {loading ? (
-        <ActivityIndicator color={theme.colors.text} />
+        <ActivityIndicator color={variant === 'primary' ? '#FFFFFF' : theme.colors.text} />
       ) : (
-        <Text style={styles.buttonText}>{title}</Text>
+        <Text style={[styles.buttonText, variant === 'primary' ? styles.primaryText : styles.secondaryText]}>{title}</Text>
       )}
     </Pressable>
   );
@@ -40,17 +40,17 @@ export const Button: React.FC<ButtonProps> = ({ title, onPress, loading, variant
 
 const styles = StyleSheet.create({
   button: {
-    paddingVertical: theme.spacing.sm,
+    paddingVertical: 12,
     paddingHorizontal: theme.spacing.lg,
     borderRadius: theme.borderRadius.lg,
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 48,
+    minHeight: 50,
     borderWidth: 1,
   },
   pressed: {
-    transform: [{ scale: 0.98 }],
-    opacity: 0.9,
+    transform: [{ scale: 0.985 }],
+    opacity: 0.93,
   },
   primaryButton: {
     backgroundColor: theme.colors.primary,
@@ -63,12 +63,16 @@ const styles = StyleSheet.create({
     ...theme.shadows.soft,
   },
   ghostButton: {
-    backgroundColor: 'transparent',
+    backgroundColor: 'rgba(255, 255, 255, 0.62)',
     borderColor: theme.colors.borderSoft,
   },
   buttonText: {
     ...theme.typography.button,
+  },
+  primaryText: {
+    color: '#FFFFFF',
+  },
+  secondaryText: {
     color: theme.colors.text,
-    textTransform: 'uppercase',
   },
 });
