@@ -5,9 +5,31 @@ import { normalizeText } from '../utils/text';
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const supabaseKey = process.env.EXPO_PUBLIC_SUPABASE_KEY;
 
+const decodeJwtRole = (token?: string): string => {
+  if (!token) return 'unknown';
+  try {
+    const parts = token.split('.');
+    if (parts.length < 2) return 'unknown';
+    const payload = parts[1];
+    const normalized = payload.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4);
+    const decoded = JSON.parse(atob(padded));
+    return String(decoded?.role || 'unknown');
+  } catch {
+    return 'unknown';
+  }
+};
+
+const supabaseKeyRole = decodeJwtRole(supabaseKey);
+const usingServiceRoleInClient = supabaseKeyRole === 'service_role';
+
 // Fail gracefully if keys are missing to prevent immediate crash
 if (!supabaseUrl || !supabaseKey) {
   console.warn('Supabase keys are missing! Check your .env file.');
+}
+
+if (usingServiceRoleInClient) {
+  console.error('EXPO_PUBLIC_SUPABASE_KEY is using service_role. Replace it with Supabase anon public key for client apps.');
 }
 
 export const supabase = (supabaseUrl && supabaseKey)
@@ -78,6 +100,12 @@ const toVisibleNotes = (rows: any[] | null | undefined): Note[] =>
 
 export const enqueueReel = async (url: string): Promise<{ reelId?: number; status?: Note['status']; error?: string }> => {
   try {
+    if (usingServiceRoleInClient) {
+      return {
+        error: 'Client is using service_role key. Set EXPO_PUBLIC_SUPABASE_KEY to the Supabase anon public key and rebuild the app.',
+      };
+    }
+
     await ensureUserSession();
 
     const { data, error } = await supabase.functions.invoke('enqueue-reel', {
