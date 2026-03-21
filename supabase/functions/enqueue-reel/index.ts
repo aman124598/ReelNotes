@@ -22,6 +22,30 @@ function isValidInstagramUrl(url: string): boolean {
   return INSTAGRAM_PATTERNS.some((pattern) => pattern.test(url))
 }
 
+async function triggerWorkerRunOnce(): Promise<void> {
+  const workerBaseUrl = Deno.env.get("WORKER_BASE_URL")?.trim()
+  if (!workerBaseUrl) return
+
+  const workerSecret = Deno.env.get("WORKER_SECRET")?.trim()
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  }
+
+  if (workerSecret) {
+    headers.Authorization = `Bearer ${workerSecret}`
+  }
+
+  try {
+    const endpoint = `${workerBaseUrl.replace(/\/$/, "")}/worker/run-once`
+    await fetch(endpoint, {
+      method: "POST",
+      headers,
+    })
+  } catch (_error) {
+    // Worker trigger is best-effort; queueing already succeeded.
+  }
+}
+
 async function getAuthenticatedUserId(req: Request, supabaseUrl: string, anonKey: string): Promise<string | null> {
   const authHeader = req.headers.get("Authorization")
   if (!authHeader) return null
@@ -114,6 +138,7 @@ serve(async (req) => {
       }
 
       if (existingActiveJob) {
+        await triggerWorkerRunOnce()
         return new Response(
           JSON.stringify({ reelId, status: "queued" }),
           { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -130,6 +155,8 @@ serve(async (req) => {
           { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         )
       }
+
+      await triggerWorkerRunOnce()
 
       return new Response(
         JSON.stringify({ reelId, status: "queued" }),
@@ -175,6 +202,8 @@ serve(async (req) => {
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       )
     }
+
+    await triggerWorkerRunOnce()
 
     return new Response(
       JSON.stringify({ reelId: newReel.id, status: newReel.status }),
