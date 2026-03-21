@@ -69,5 +69,7 @@ Important:
 - `OCR_ENABLED=true` enables extraction of on-screen recipe text from video frames.
 - `OCR_FRAME_INTERVAL_SECONDS` controls frame sampling rate.
 - `OCR_MAX_FRAMES` limits processing cost per reel.
+- `OCR_RECIPE_SIGNAL_THRESHOLD` controls how much recipe-like OCR text is needed before audio can be skipped.
 - `FORCE_AUDIO_TRANSCRIBE=true` runs audio transcription even when captions exist.
+- `PRIORITIZE_OCR_OVER_AUDIO=true` skips audio transcription when OCR strongly indicates recipe content.
 - If `GROQ_API_KEY` is missing, the worker falls back to a local heuristic parser for recipe structuring.

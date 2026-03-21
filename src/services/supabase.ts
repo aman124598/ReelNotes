@@ -98,6 +98,47 @@ const shouldHideProcessedEmptyNote = (note: Note): boolean => {
 const toVisibleNotes = (rows: any[] | null | undefined): Note[] =>
   (rows || []).map(normalizeNote).filter((note) => !shouldHideProcessedEmptyNote(note));
 
+const invokeEdgeFunction = async <T = any>(name: string, body: Record<string, unknown>): Promise<{ data?: T; error?: string }> => {
+  if (!supabaseUrl || !supabaseKey) {
+    return { error: 'Supabase keys missing' };
+  }
+
+  const { data: sessionData } = await supabase.auth.getSession();
+  const accessToken = sessionData?.session?.access_token;
+  if (!accessToken) {
+    return { error: 'No user session. Enable Supabase Anonymous sign-ins and rebuild the app.' };
+  }
+
+  try {
+    const response = await fetch(`${supabaseUrl}/functions/v1/${name}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: supabaseKey,
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify(body),
+    });
+
+    let payload: any = null;
+    try {
+      payload = await response.json();
+    } catch {
+      payload = null;
+    }
+
+    if (!response.ok) {
+      return {
+        error: payload?.error || payload?.message || `Edge Function returned status ${response.status}`,
+      };
+    }
+
+    return { data: payload as T };
+  } catch (error: any) {
+    return { error: error?.message || 'Failed to send a request to the Edge Function' };
+  }
+};
+
 export const enqueueReel = async (url: string): Promise<{ reelId?: number; status?: Note['status']; error?: string }> => {
   try {
     if (usingServiceRoleInClient) {
@@ -108,13 +149,10 @@ export const enqueueReel = async (url: string): Promise<{ reelId?: number; statu
 
     await ensureUserSession();
 
-    const { data, error } = await supabase.functions.invoke('enqueue-reel', {
-      body: { url },
-    });
-
+    const { data, error } = await invokeEdgeFunction<{ reelId?: number; status?: Note['status'] }>('enqueue-reel', { url });
     if (error) {
       console.error('Supabase function error:', error);
-      return { error: error.message };
+      return { error };
     }
 
     return {
@@ -140,26 +178,14 @@ export const retryReelProcessing = async (reelId: number): Promise<{ status?: st
   try {
     await ensureUserSession();
 
-    const { data, error } = await supabase.functions.invoke('enqueue-reel', {
-      body: { reelId, retry: true },
-    });
-
+    const { data, error } = await invokeEdgeFunction<{ status?: string }>('enqueue-reel', { reelId, retry: true });
     if (error) {
       console.error('Retry function error:', error);
-      return { error: error.message };
+      return { error };
     }
 
     return { status: data?.status };
   } catch (err: any) {
-    if (err?.name === 'FunctionsHttpError' && err?.context) {
-      try {
-        const body = await err.context.json();
-        console.error('Retry reel HTTP error body:', body);
-        return { error: body?.error || 'Edge Function returned an HTTP error' };
-      } catch (_parseErr) {
-        console.error('Retry reel HTTP error (unparsed body):', err);
-      }
-    }
     console.error('Retry reel error:', err);
     return { error: err.message || 'Failed to retry reel processing' };
   }

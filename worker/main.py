@@ -35,7 +35,9 @@ OCR_FRAME_INTERVAL_SECONDS = float(os.getenv("OCR_FRAME_INTERVAL_SECONDS", "1.5"
 OCR_MAX_FRAMES = int(os.getenv("OCR_MAX_FRAMES", "8"))
 OCR_LANG = os.getenv("OCR_LANG", "eng")
 OCR_MIN_LINE_LENGTH = int(os.getenv("OCR_MIN_LINE_LENGTH", "3"))
+OCR_RECIPE_SIGNAL_THRESHOLD = int(os.getenv("OCR_RECIPE_SIGNAL_THRESHOLD", "2"))
 FORCE_AUDIO_TRANSCRIBE = os.getenv("FORCE_AUDIO_TRANSCRIBE", "false").strip().lower() in {"1", "true", "yes", "on"}
+PRIORITIZE_OCR_OVER_AUDIO = os.getenv("PRIORITIZE_OCR_OVER_AUDIO", "true").strip().lower() in {"1", "true", "yes", "on"}
 TESSERACT_CMD = os.getenv("TESSERACT_CMD", "").strip()
 AUTO_POLL_ENABLED = os.getenv("AUTO_POLL_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
 AUTO_POLL_INTERVAL_SECONDS = float(os.getenv("AUTO_POLL_INTERVAL_SECONDS", "5"))
@@ -292,6 +294,52 @@ def _merge_text(primary: str, secondary: str) -> str:
       seen.add(key)
       merged.append(line)
   return "\n".join(merged)
+
+
+def _ocr_recipe_signal_count(ocr_text: str) -> int:
+  if not ocr_text:
+    return 0
+  text = ocr_text.lower()
+  signals = [
+    "ingredients",
+    "ingredient",
+    "method",
+    "directions",
+    "instructions",
+    "recipe",
+    "cup",
+    "cups",
+    "tbsp",
+    "tsp",
+    "gram",
+    "grams",
+    "ml",
+    "kg",
+  ]
+  return sum(1 for token in signals if token in text)
+
+
+def _is_transcript_line_noise(line: str) -> bool:
+  l = line.strip().lower()
+  if not l:
+    return True
+  normalized = re.sub(r"[^a-z0-9\s]", " ", l)
+  normalized = re.sub(r"\s+", " ", normalized).strip()
+  if normalized in {"music", "applause", "laughter", "background music", "song", "lyrics"}:
+    return True
+  noise_tokens = [
+    "official audio",
+    "original sound",
+    "la la la",
+    "oh oh",
+    "baby",
+    "yeah",
+    "uh huh",
+    "mm hmm",
+    "na na",
+    "dj",
+  ]
+  return any(tok in normalized for tok in noise_tokens)
 
 
 def _parse_json_from_model_response(content: str) -> dict[str, Any]:
@@ -677,21 +725,32 @@ def _process_one_job() -> dict[str, Any]:
       captions = _load_caption_text(temp_dir, reel_url)
       ocr_text = ""
       transcript = ""
+      ocr_signal_count = 0
+      transcript_filtered = ""
 
       if OCR_ENABLED:
         try:
           ocr_text = _extract_ocr_text(temp_dir, reel_url)
+          ocr_signal_count = _ocr_recipe_signal_count(ocr_text)
         except Exception as ocr_error:
           print(f"[worker] OCR extraction failed for reel {reel_id}: {ocr_error}")
 
-      if FORCE_AUDIO_TRANSCRIBE or not captions:
+      should_transcribe_audio = FORCE_AUDIO_TRANSCRIBE or not captions
+      if PRIORITIZE_OCR_OVER_AUDIO and ocr_signal_count >= OCR_RECIPE_SIGNAL_THRESHOLD and not FORCE_AUDIO_TRANSCRIBE:
+        should_transcribe_audio = False
+
+      if should_transcribe_audio:
         try:
           audio_path = _download_audio(temp_dir, reel_url)
           transcript = _transcribe_audio(audio_path)
+          transcript_filtered = "\n".join(
+            line for line in transcript.splitlines() if not _is_transcript_line_noise(line)
+          ).strip()
         except Exception as audio_error:
           print(f"[worker] Audio extraction failed for reel {reel_id}: {audio_error}")
 
-      combined = _merge_text(_merge_text(captions, ocr_text), transcript)
+      effective_transcript = transcript_filtered or transcript
+      combined = _merge_text(_merge_text(captions, ocr_text), effective_transcript)
       if not combined:
         combined = _oembed_caption(reel_url)
       if not combined:
@@ -710,7 +769,7 @@ def _process_one_job() -> dict[str, Any]:
         "title": recipe.get("dish_name") or "Untitled Recipe",
         "content_type": "Recipe",
         "structured_text": structured_text,
-        "raw_transcript": transcript,
+        "raw_transcript": effective_transcript,
         "raw_ocr": ocr_text,
         "source_transcript": combined,
         "recipe_json": recipe,
@@ -789,7 +848,9 @@ def diagnostics(authorization: str | None = Header(default=None)) -> dict[str, A
     "ocr_frame_interval_seconds": OCR_FRAME_INTERVAL_SECONDS,
     "ocr_max_frames": OCR_MAX_FRAMES,
     "ocr_lang": OCR_LANG,
+    "ocr_recipe_signal_threshold": OCR_RECIPE_SIGNAL_THRESHOLD,
     "force_audio_transcribe": FORCE_AUDIO_TRANSCRIBE,
+    "prioritize_ocr_over_audio": PRIORITIZE_OCR_OVER_AUDIO,
     "has_tesseract_cmd_override": bool(TESSERACT_CMD),
     "yt_dlp_cookies_file": YTDLP_COOKIES_FILE or None,
     "auto_poll_enabled": AUTO_POLL_ENABLED,
