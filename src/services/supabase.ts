@@ -139,6 +139,109 @@ const invokeEdgeFunction = async <T = any>(name: string, body: Record<string, un
   }
 };
 
+const isEdgeGatewayError = (error?: string): boolean => {
+  if (!error) return false;
+  const msg = error.toLowerCase();
+  return msg.includes('status 502') || msg.includes('status 503') || msg.includes('status 504');
+};
+
+const enqueueReelDirect = async (url: string): Promise<{ reelId?: number; status?: Note['status']; error?: string }> => {
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError) {
+    return { error: sessionError.message };
+  }
+
+  const ownerId = sessionData?.session?.user?.id;
+  if (!ownerId) {
+    return { error: 'No user session. Enable Supabase Anonymous sign-ins and rebuild the app.' };
+  }
+
+  const { data: newReel, error: reelInsertError } = await supabase
+    .from('reels')
+    .insert({
+      owner_id: ownerId,
+      url,
+      title: 'Processing Reel',
+      content_type: 'Recipe',
+      structured_text: 'Processing speech and extracting recipe notes...',
+      status: 'queued',
+    })
+    .select('id, status')
+    .single();
+
+  if (reelInsertError || !newReel) {
+    return { error: reelInsertError?.message || 'Failed to create reel note' };
+  }
+
+  const { error: jobError } = await supabase
+    .from('reel_jobs')
+    .insert({ reel_id: newReel.id, status: 'queued', attempt_count: 0 });
+
+  if (jobError) {
+    await supabase.from('reels').delete().eq('id', newReel.id);
+    return { error: jobError.message };
+  }
+
+  return { reelId: newReel.id, status: newReel.status as Note['status'] };
+};
+
+const retryReelDirect = async (reelId: number): Promise<{ status?: string; error?: string }> => {
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError) {
+    return { error: sessionError.message };
+  }
+
+  const ownerId = sessionData?.session?.user?.id;
+  if (!ownerId) {
+    return { error: 'No user session. Enable Supabase Anonymous sign-ins and rebuild the app.' };
+  }
+
+  const { data: reel, error: reelError } = await supabase
+    .from('reels')
+    .select('id')
+    .eq('id', reelId)
+    .eq('owner_id', ownerId)
+    .single();
+
+  if (reelError || !reel) {
+    return { error: 'Reel note not found' };
+  }
+
+  const { error: updateError } = await supabase
+    .from('reels')
+    .update({ status: 'queued', processing_error: null })
+    .eq('id', reelId)
+    .eq('owner_id', ownerId);
+
+  if (updateError) {
+    return { error: updateError.message };
+  }
+
+  const { data: existingActiveJob, error: existingJobError } = await supabase
+    .from('reel_jobs')
+    .select('id')
+    .eq('reel_id', reelId)
+    .in('status', ['queued', 'processing'])
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (existingJobError) {
+    return { error: existingJobError.message };
+  }
+
+  if (!existingActiveJob) {
+    const { error: jobError } = await supabase
+      .from('reel_jobs')
+      .insert({ reel_id: reelId, status: 'queued', attempt_count: 0 });
+    if (jobError) {
+      return { error: jobError.message };
+    }
+  }
+
+  return { status: 'queued' };
+};
+
 export const enqueueReel = async (url: string): Promise<{ reelId?: number; status?: Note['status']; error?: string }> => {
   try {
     if (usingServiceRoleInClient) {
@@ -151,6 +254,10 @@ export const enqueueReel = async (url: string): Promise<{ reelId?: number; statu
 
     const { data, error } = await invokeEdgeFunction<{ reelId?: number; status?: Note['status'] }>('enqueue-reel', { url });
     if (error) {
+      if (isEdgeGatewayError(error)) {
+        console.warn('Edge function gateway error during enqueue; falling back to direct DB enqueue.');
+        return await enqueueReelDirect(url);
+      }
       console.error('Supabase function error:', error);
       return { error };
     }
@@ -180,6 +287,10 @@ export const retryReelProcessing = async (reelId: number): Promise<{ status?: st
 
     const { data, error } = await invokeEdgeFunction<{ status?: string }>('enqueue-reel', { reelId, retry: true });
     if (error) {
+      if (isEdgeGatewayError(error)) {
+        console.warn('Edge function gateway error during retry; falling back to direct DB retry.');
+        return await retryReelDirect(reelId);
+      }
       console.error('Retry function error:', error);
       return { error };
     }
