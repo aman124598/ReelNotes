@@ -30,7 +30,7 @@ export const AddNoteScreen = ({ navigation }: any) => {
   useEffect(() => {
     Animated.timing(fadeAnim, {
       toValue: 1,
-      duration: 450,
+      duration: 420,
       useNativeDriver: true,
     }).start();
   }, [fadeAnim]);
@@ -42,13 +42,13 @@ export const AddNoteScreen = ({ navigation }: any) => {
     }
   };
 
-  const validateInstagramUrl = (url: string): boolean => {
+  const validateInstagramUrl = (value: string): boolean => {
     const patterns = [
       /instagram\.com\/reel\/[A-Za-z0-9_-]+/,
       /instagram\.com\/p\/[A-Za-z0-9_-]+/,
       /instagram\.com\/tv\/[A-Za-z0-9_-]+/,
     ];
-    return patterns.some(pattern => pattern.test(url));
+    return patterns.some((pattern) => pattern.test(value));
   };
 
   const handleExtract = async () => {
@@ -103,6 +103,7 @@ export const AddNoteScreen = ({ navigation }: any) => {
     } else {
       Alert.alert('Error', 'Failed to create note');
     }
+
     setManualSaving(false);
   };
 
@@ -121,97 +122,80 @@ export const AddNoteScreen = ({ navigation }: any) => {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}
       >
-      <Animated.View style={[styles.contentWrapper, { opacity: fadeAnim }]}>
-        <View style={styles.header}>
-          <Button
-            title="Back"
-            onPress={() => navigation.goBack()}
-            variant="ghost"
-            style={styles.backButton}
-          />
-          <View style={styles.headerText}>
-            <Text style={styles.headerTitle}>New Note</Text>
-            <Text style={styles.headerSubtitle}>Paste a reel and save only key recipe notes.</Text>
+        <Animated.View style={[styles.contentWrapper, { opacity: fadeAnim }]}>
+          <View style={styles.header}>
+            <Button title="Back" onPress={() => navigation.goBack()} variant="ghost" style={styles.backButton} />
+            <View style={styles.headerTextWrap}>
+              <Text style={styles.headerEyebrow}>NEW CAPTURE</Text>
+              <Text style={styles.headerTitle}>Add A Note</Text>
+            </View>
+            <View style={styles.headerSpacer} />
           </View>
-          <View style={styles.headerSpacer} />
-        </View>
 
-        <ScrollView
-          ref={scrollRef}
-          style={styles.content}
-          contentContainerStyle={styles.contentContainer}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-        >
-          <View style={styles.section}>
-            <Text style={styles.label}>Instagram Link</Text>
-            <View style={styles.inputRow}>
+          <ScrollView
+            ref={scrollRef}
+            style={styles.content}
+            contentContainerStyle={styles.contentContainer}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
+            <View style={styles.sectionCard}>
+              <Text style={styles.sectionTitle}>Instagram Reel Link</Text>
+              <Text style={styles.sectionDescription}>Paste any reel, post, or IGTV URL and let ReelNotes extract the essentials.</Text>
+              <View style={styles.inputRow}>
+                <TextInput
+                  style={styles.linkInput}
+                  value={url}
+                  onChangeText={setUrl}
+                  placeholder="https://www.instagram.com/reel/..."
+                  placeholderTextColor={theme.colors.textMuted}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="url"
+                  textContentType="URL"
+                  autoComplete="url"
+                  returnKeyType="go"
+                />
+                <Button title="Paste" onPress={handlePasteFromClipboard} variant="secondary" style={styles.pasteButton} />
+              </View>
+              <Button title={loading ? 'Queueing...' : 'Extract From Reel'} onPress={handleExtract} loading={loading} />
+            </View>
+
+            <View style={styles.separatorWrap}>
+              <View style={styles.separatorLine} />
+              <Text style={styles.separatorText}>OR WRITE IT MANUALLY</Text>
+              <View style={styles.separatorLine} />
+            </View>
+
+            <View style={styles.sectionCard}>
+              <Text style={styles.sectionTitle}>Manual Note</Text>
               <TextInput
-                style={styles.input}
-                value={url}
-                onChangeText={setUrl}
-                placeholder="https://www.instagram.com/reel/..."
+                style={[styles.input, styles.fieldSpacing]}
+                value={manualTitle}
+                onChangeText={setManualTitle}
+                placeholder="Title"
                 placeholderTextColor={theme.colors.textMuted}
-                autoCapitalize="none"
-                autoCorrect={false}
+                onFocus={bringManualSectionIntoView}
+              />
+              <TextInput
+                style={styles.textArea}
+                value={manualBody}
+                onChangeText={setManualBody}
+                placeholder="Write your recipe notes here..."
+                placeholderTextColor={theme.colors.textMuted}
+                multiline
+                textAlignVertical="top"
+                onFocus={bringManualSectionIntoView}
               />
               <Button
-                title="Paste"
-                onPress={handlePasteFromClipboard}
+                title={manualSaving ? 'Saving...' : 'Create Manual Note'}
+                onPress={handleManualCreate}
                 variant="secondary"
-                style={styles.pasteButton}
+                loading={manualSaving}
               />
             </View>
-            <Text style={styles.helperText}>We support reels, posts, and IGTV links.</Text>
-          </View>
-
-          <Button
-            title={loading ? 'Queueing...' : 'Process Reel'}
-            onPress={handleExtract}
-            loading={loading}
-            style={styles.extractButton}
-          />
-          <Text style={styles.processingText}>
-            We will save the reel immediately and extract recipe notes in the background.
-          </Text>
-
-          <View style={styles.divider}>
-            <View style={styles.dividerLine} />
-            <Text style={styles.dividerText}>MANUAL</Text>
-            <View style={styles.dividerLine} />
-          </View>
-
-          <View style={styles.section}>
-            <Text style={styles.label}>Title</Text>
-            <TextInput
-              style={styles.input}
-              value={manualTitle}
-              onChangeText={setManualTitle}
-              placeholder="Quick title for your note"
-              placeholderTextColor={theme.colors.textMuted}
-              onFocus={bringManualSectionIntoView}
-            />
-            <Text style={[styles.label, styles.manualContentLabel]}>Content</Text>
-            <TextInput
-              style={styles.manualInput}
-              value={manualBody}
-              onChangeText={setManualBody}
-              placeholder="Write your note manually..."
-              placeholderTextColor={theme.colors.textMuted}
-              multiline
-              textAlignVertical="top"
-              onFocus={bringManualSectionIntoView}
-            />
-          </View>
-
-          <Button
-            title={manualSaving ? 'Saving...' : 'Create Manual Note'}
-            onPress={handleManualCreate}
-            variant="secondary"
-            loading={manualSaving}
-          />
-        </ScrollView>
-      </Animated.View>
+          </ScrollView>
+        </Animated.View>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -225,122 +209,122 @@ const styles = StyleSheet.create({
   keyboardWrapper: {
     flex: 1,
   },
+  contentWrapper: {
+    flex: 1,
+  },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
     paddingHorizontal: theme.spacing.lg,
     paddingTop: theme.spacing.lg,
     paddingBottom: theme.spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
   backButton: {
-    paddingHorizontal: theme.spacing.md,
-    minHeight: 36,
+    minWidth: 76,
   },
-  headerText: {
+  headerTextWrap: {
     flex: 1,
-    marginLeft: theme.spacing.sm,
+    marginLeft: theme.spacing.md,
   },
-  headerSpacer: {
-    width: 40,
+  headerEyebrow: {
+    ...theme.typography.caption,
+    color: theme.colors.accent,
+    letterSpacing: 1,
   },
   headerTitle: {
     ...theme.typography.title,
     color: theme.colors.text,
   },
-  headerSubtitle: {
-    ...theme.typography.body,
-    color: theme.colors.textMuted,
-    marginTop: 2,
+  headerSpacer: {
+    width: 72,
   },
   content: {
     flex: 1,
   },
-  contentWrapper: {
-    flex: 1,
-    minHeight: 0,
-  },
   contentContainer: {
     paddingHorizontal: theme.spacing.lg,
     paddingBottom: theme.spacing.xxl,
-    flexGrow: 1,
   },
-  section: {
-    marginBottom: theme.spacing.lg,
-    backgroundColor: theme.colors.card,
+  sectionCard: {
+    backgroundColor: 'rgba(255,255,255,0.72)',
     borderRadius: theme.borderRadius.lg,
-    padding: theme.spacing.md,
     borderWidth: 1,
     borderColor: theme.colors.borderSoft,
-    ...theme.shadows.soft,
+    padding: theme.spacing.md,
+    marginBottom: theme.spacing.lg,
   },
-  label: {
-    ...theme.typography.body,
+  sectionTitle: {
+    ...theme.typography.heading,
     color: theme.colors.text,
-    marginBottom: theme.spacing.sm,
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
+    marginBottom: 6,
+  },
+  sectionDescription: {
+    ...theme.typography.body,
+    color: theme.colors.textMuted,
+    marginBottom: theme.spacing.md,
   },
   inputRow: {
     flexDirection: 'row',
+    alignItems: 'stretch',
     marginBottom: theme.spacing.md,
+  },
+  linkInput: {
+    flex: 1,
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: 'rgba(255,255,255,0.98)',
+    paddingHorizontal: theme.spacing.md,
+    paddingVertical: 12,
+    color: theme.colors.text,
+    ...theme.typography.body,
   },
   input: {
     flex: 1,
-    backgroundColor: theme.colors.backgroundAlt,
     borderRadius: theme.borderRadius.lg,
-    padding: theme.spacing.md,
-    color: theme.colors.text,
-    ...theme.typography.body,
     borderWidth: 1,
     borderColor: theme.colors.borderSoft,
+    backgroundColor: 'rgba(255,255,255,0.95)',
+    paddingHorizontal: theme.spacing.md,
+    paddingVertical: 12,
+    color: theme.colors.text,
+    ...theme.typography.body,
+  },
+  fieldSpacing: {
+    marginBottom: theme.spacing.md,
   },
   pasteButton: {
     marginLeft: theme.spacing.sm,
-    paddingHorizontal: theme.spacing.md,
-    minWidth: 80,
+    minWidth: 84,
+    alignSelf: 'stretch',
   },
-  helperText: {
-    ...theme.typography.caption,
-    color: theme.colors.textSubtle,
-  },
-  extractButton: {
-    marginBottom: theme.spacing.lg,
-  },
-  processingText: {
-    ...theme.typography.caption,
-    color: theme.colors.textSubtle,
-    marginBottom: theme.spacing.md,
-  },
-  divider: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginVertical: theme.spacing.lg,
-  },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: theme.colors.borderSoft,
-    opacity: 0.7,
-  },
-  dividerText: {
-    ...theme.typography.caption,
-    color: theme.colors.textSubtle,
-    paddingHorizontal: theme.spacing.md,
-    textTransform: 'uppercase',
-    letterSpacing: 1.2,
-  },
-  manualContentLabel: {
-    marginTop: theme.spacing.md,
-  },
-  manualInput: {
-    backgroundColor: theme.colors.backgroundAlt,
-    borderRadius: theme.borderRadius.lg,
-    padding: theme.spacing.md,
-    color: theme.colors.text,
-    ...theme.typography.body,
+  textArea: {
+    borderRadius: theme.borderRadius.md,
     borderWidth: 1,
     borderColor: theme.colors.borderSoft,
-    minHeight: 140,
+    backgroundColor: 'rgba(255,255,255,0.95)',
+    paddingHorizontal: theme.spacing.md,
+    paddingVertical: theme.spacing.md,
+    color: theme.colors.text,
+    ...theme.typography.body,
+    minHeight: 170,
+    marginBottom: theme.spacing.md,
+  },
+  separatorWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: theme.spacing.lg,
+  },
+  separatorLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: theme.colors.border,
+  },
+  separatorText: {
+    ...theme.typography.caption,
+    color: theme.colors.textSubtle,
+    paddingHorizontal: theme.spacing.sm,
+    letterSpacing: 0.7,
   },
 });

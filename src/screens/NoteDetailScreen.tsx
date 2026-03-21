@@ -31,7 +31,7 @@ export const NoteDetailScreen = ({ route, navigation }: any) => {
 
     Animated.timing(fadeAnim, {
       toValue: 1,
-      duration: 450,
+      duration: 420,
       useNativeDriver: true,
     }).start();
 
@@ -84,7 +84,7 @@ export const NoteDetailScreen = ({ route, navigation }: any) => {
     if (success) {
       setNote({ ...note, structured_text: editedText });
       setIsEditing(false);
-      Alert.alert('Success', 'Note updated!');
+      Alert.alert('Saved', 'Your note was updated.');
     } else {
       Alert.alert('Error', 'Failed to update note');
     }
@@ -110,27 +110,23 @@ export const NoteDetailScreen = ({ route, navigation }: any) => {
   };
 
   const handleDelete = () => {
-    Alert.alert(
-      'Delete Note',
-      'Are you sure you want to delete this note?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            if (note) {
-              const success = await deleteNote(note.id);
-              if (success) {
-                navigation.goBack();
-              } else {
-                Alert.alert('Error', 'Failed to delete note');
-              }
+    Alert.alert('Delete Note', 'Are you sure you want to delete this note?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          if (note) {
+            const success = await deleteNote(note.id);
+            if (success) {
+              navigation.goBack();
+            } else {
+              Alert.alert('Error', 'Failed to delete note');
             }
-          },
+          }
         },
-      ]
-    );
+      },
+    ]);
   };
 
   if (loading || !note) {
@@ -163,7 +159,7 @@ export const NoteDetailScreen = ({ route, navigation }: any) => {
       <ScreenBackdrop />
       <Animated.View style={[styles.contentWrapper, { opacity: fadeAnim }]}>
         <View style={styles.header}>
-          <Button title="Back" onPress={() => navigation.goBack()} variant="ghost" style={styles.backButton} />
+          <Button title="Back" onPress={() => navigation.goBack()} variant="ghost" style={styles.headerButton} />
           <Button
             title={isEditing ? 'Cancel' : 'Edit'}
             onPress={() => {
@@ -173,7 +169,7 @@ export const NoteDetailScreen = ({ route, navigation }: any) => {
               setIsEditing(!isEditing);
             }}
             variant="secondary"
-            style={styles.editButton}
+            style={styles.headerButton}
           />
         </View>
 
@@ -182,7 +178,8 @@ export const NoteDetailScreen = ({ route, navigation }: any) => {
           contentContainerStyle={styles.contentContainer}
           showsVerticalScrollIndicator={false}
         >
-          <View style={styles.titleCard}>
+          <View style={styles.heroCard}>
+            <Text style={styles.eyebrow}>NOTE DETAIL</Text>
             <Text style={styles.title}>{note.title || 'Untitled Note'}</Text>
             <View style={styles.metaRow}>
               <View style={styles.tag}>
@@ -194,88 +191,72 @@ export const NoteDetailScreen = ({ route, navigation }: any) => {
                   isFailed ? styles.statusFailed : isStaleProcessing ? styles.statusDelayed : styles.statusProcessing,
                 ]}
               >
-                <Text style={styles.statusText}>{isStaleProcessing ? 'DELAYED' : note.status.toUpperCase()}</Text>
+                <Text style={styles.statusText}>{isStaleProcessing ? 'Delayed' : note.status}</Text>
               </View>
-              <Text style={styles.date}>
-                {new Date(note.created_at).toLocaleDateString('en-US', {
-                  month: 'long',
-                  day: 'numeric',
-                  year: 'numeric',
-                })}
-              </Text>
             </View>
           </View>
 
           {isProcessing && !isStaleProcessing && (
-            <View style={styles.processingBanner}>
-              <Text style={styles.processingBannerText}>Processing speech and extracting recipe notes...</Text>
+            <View style={styles.infoBanner}>
+              <Text style={styles.infoText}>Processing speech and extracting recipe notes...</Text>
             </View>
           )}
 
           {isStaleProcessing && (
-            <View style={styles.delayedBanner}>
-              <Text style={styles.delayedTitle}>Processing is taking longer than expected</Text>
-              <Text style={styles.delayedSubtext}>This note has been processing for about {processingMinutes} min.</Text>
-              <View style={styles.delayedActions}>
-                <Button title="Refresh Status" onPress={handleRefresh} variant="secondary" style={styles.delayedActionButton} />
-                <Button
-                  title={retrying ? 'Retrying...' : 'Retry Now'}
-                  onPress={handleRetry}
-                  loading={retrying}
-                  style={styles.delayedActionButton}
-                />
+            <View style={styles.warnBanner}>
+              <Text style={styles.warnTitle}>Processing is delayed</Text>
+              <Text style={styles.warnText}>This has been running for about {processingMinutes} min.</Text>
+              <View style={styles.rowButtons}>
+                <Button title="Refresh" onPress={handleRefresh} variant="secondary" style={styles.rowButton} />
+                <Button title={retrying ? 'Retrying...' : 'Retry'} onPress={handleRetry} loading={retrying} style={styles.rowButton} />
               </View>
             </View>
           )}
 
           {isFailed && (
             <View style={styles.errorBanner}>
-              <Text style={styles.errorBannerText}>
-                {note.processing_error || 'The reel could not be processed. Try again.'}
-              </Text>
-              <Button
-                title={retrying ? 'Retrying...' : 'Retry Processing'}
-                onPress={handleRetry}
-                loading={retrying}
-                style={styles.retryButton}
-              />
+              <Text style={styles.errorText}>{note.processing_error || 'The reel could not be processed. Try again.'}</Text>
+              <Button title={retrying ? 'Retrying...' : 'Retry Processing'} onPress={handleRetry} loading={retrying} />
             </View>
           )}
 
           {isEditing ? (
             <TextInput
-              style={styles.textInput}
+              style={styles.editor}
               value={editedText}
               onChangeText={setEditedText}
               multiline
               placeholder="Enter note content..."
               placeholderTextColor={theme.colors.textMuted}
+              textAlignVertical="top"
             />
           ) : (
-            <View style={styles.contentCard}>
-              <Text style={styles.structuredText}>
-                {note.structured_text || 'No extracted recipe text yet.'}
-              </Text>
+            <View style={styles.noteCard}>
+              <Text style={styles.structuredText}>{note.structured_text || 'No extracted recipe text yet.'}</Text>
             </View>
           )}
 
-          {note.url && (
-            <View style={styles.metaSection}>
-              <Text style={styles.metaLabel}>Source URL:</Text>
-              <Text style={styles.metaValue}>{note.url}</Text>
+          {note.url ? (
+            <View style={styles.sourceCard}>
+              <Text style={styles.sourceLabel}>Source URL</Text>
+              <Text style={styles.sourceValue}>{note.url}</Text>
             </View>
-          )}
+          ) : null}
+
+          <View style={styles.dateWrap}>
+            <Text style={styles.dateText}>
+              Created {new Date(note.created_at).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+            </Text>
+          </View>
         </ScrollView>
 
-        {isEditing ? (
-          <View style={styles.footer}>
+        <View style={styles.footer}>
+          {isEditing ? (
             <Button title="Save Changes" onPress={handleSave} />
-          </View>
-        ) : (
-          <View style={styles.footer}>
+          ) : (
             <Button title="Delete Note" onPress={handleDelete} variant="secondary" />
-          </View>
-        )}
+          )}
+        </View>
       </Animated.View>
     </SafeAreaView>
   );
@@ -286,41 +267,40 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: theme.colors.background,
   },
+  contentWrapper: {
+    flex: 1,
+    minHeight: 0,
+  },
   header: {
+    paddingHorizontal: theme.spacing.lg,
+    paddingTop: 0,
+    paddingBottom: theme.spacing.md,
     flexDirection: 'row',
     justifyContent: 'space-between',
-    paddingHorizontal: theme.spacing.lg,
-    paddingTop: theme.spacing.lg,
-    paddingBottom: theme.spacing.md,
   },
-  backButton: {
-    paddingHorizontal: theme.spacing.md,
-    minHeight: 36,
-  },
-  editButton: {
-    paddingHorizontal: theme.spacing.md,
-    minHeight: 36,
+  headerButton: {
+    minWidth: 90,
   },
   content: {
     flex: 1,
     paddingHorizontal: theme.spacing.lg,
   },
   contentContainer: {
-    paddingBottom: theme.spacing.xxl,
-    flexGrow: 1,
+    paddingBottom: theme.spacing.xl,
   },
-  contentWrapper: {
-    flex: 1,
-    minHeight: 0,
-  },
-  titleCard: {
-    backgroundColor: theme.colors.card,
-    borderRadius: theme.borderRadius.md,
-    padding: theme.spacing.lg,
+  heroCard: {
+    backgroundColor: 'rgba(255,255,255,0.72)',
     borderWidth: 1,
     borderColor: theme.colors.borderSoft,
+    borderRadius: theme.borderRadius.lg,
+    padding: theme.spacing.lg,
     marginBottom: theme.spacing.md,
-    ...theme.shadows.soft,
+  },
+  eyebrow: {
+    ...theme.typography.caption,
+    color: theme.colors.accent,
+    letterSpacing: 1,
+    marginBottom: theme.spacing.xs,
   },
   title: {
     ...theme.typography.title,
@@ -330,151 +310,144 @@ const styles = StyleSheet.create({
   metaRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
   },
   tag: {
     backgroundColor: theme.colors.accentSoft,
     borderRadius: 999,
-    paddingVertical: 4,
     paddingHorizontal: theme.spacing.sm,
+    paddingVertical: 4,
+    marginRight: theme.spacing.sm,
   },
   tagText: {
     ...theme.typography.caption,
     color: theme.colors.accent,
     textTransform: 'uppercase',
-    letterSpacing: 0.6,
   },
   statusPill: {
     borderRadius: 999,
-    paddingVertical: 4,
     paddingHorizontal: theme.spacing.sm,
-    marginHorizontal: theme.spacing.sm,
+    paddingVertical: 4,
   },
   statusProcessing: {
-    backgroundColor: theme.colors.accentSoft,
-  },
-  statusFailed: {
     backgroundColor: theme.colors.primarySoft,
   },
   statusDelayed: {
-    backgroundColor: 'rgba(255, 179, 71, 0.18)',
+    backgroundColor: 'rgba(214, 90, 49, 0.2)',
+  },
+  statusFailed: {
+    backgroundColor: 'rgba(197, 48, 48, 0.18)',
   },
   statusText: {
     ...theme.typography.caption,
     color: theme.colors.text,
     textTransform: 'uppercase',
-    letterSpacing: 0.6,
   },
-  date: {
-    ...theme.typography.caption,
-    color: theme.colors.textSubtle,
-  },
-  processingBanner: {
-    backgroundColor: theme.colors.card,
+  infoBanner: {
+    backgroundColor: 'rgba(255,255,255,0.72)',
+    borderRadius: theme.borderRadius.lg,
     borderWidth: 1,
     borderColor: theme.colors.borderSoft,
-    borderRadius: theme.borderRadius.lg,
-    marginBottom: theme.spacing.md,
     padding: theme.spacing.md,
+    marginBottom: theme.spacing.md,
   },
-  processingBannerText: {
+  infoText: {
     ...theme.typography.body,
     color: theme.colors.textMuted,
   },
-  delayedBanner: {
-    backgroundColor: 'rgba(255, 179, 71, 0.08)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 179, 71, 0.35)',
+  warnBanner: {
+    backgroundColor: 'rgba(214, 90, 49, 0.12)',
     borderRadius: theme.borderRadius.lg,
-    marginBottom: theme.spacing.md,
+    borderWidth: 1,
+    borderColor: 'rgba(214, 90, 49, 0.35)',
     padding: theme.spacing.md,
+    marginBottom: theme.spacing.md,
   },
-  delayedTitle: {
+  warnTitle: {
     ...theme.typography.heading,
-    color: '#FFB347',
-    marginBottom: theme.spacing.xs,
+    color: theme.colors.primary,
+    marginBottom: 4,
   },
-  delayedSubtext: {
+  warnText: {
     ...theme.typography.body,
     color: theme.colors.textMuted,
     marginBottom: theme.spacing.sm,
   },
-  delayedActions: {
+  rowButtons: {
     flexDirection: 'row',
-    alignItems: 'center',
   },
-  delayedActionButton: {
+  rowButton: {
     marginRight: theme.spacing.sm,
   },
   errorBanner: {
-    backgroundColor: theme.colors.card,
-    borderWidth: 1,
-    borderColor: theme.colors.primary,
+    backgroundColor: 'rgba(197, 48, 48, 0.08)',
     borderRadius: theme.borderRadius.lg,
-    marginBottom: theme.spacing.md,
+    borderWidth: 1,
+    borderColor: 'rgba(197, 48, 48, 0.32)',
     padding: theme.spacing.md,
+    marginBottom: theme.spacing.md,
   },
-  errorBannerText: {
+  errorText: {
     ...theme.typography.body,
-    color: theme.colors.textMuted,
+    color: theme.colors.text,
     marginBottom: theme.spacing.sm,
   },
-  retryButton: {
-    alignSelf: 'flex-start',
+  noteCard: {
+    backgroundColor: 'rgba(255,255,255,0.8)',
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: 1,
+    borderColor: theme.colors.borderSoft,
+    padding: theme.spacing.md,
   },
   structuredText: {
     ...theme.typography.body,
     color: theme.colors.text,
-    lineHeight: 24,
+    lineHeight: 25,
   },
-  textInput: {
+  editor: {
     ...theme.typography.body,
     color: theme.colors.text,
-    backgroundColor: theme.colors.card,
-    borderRadius: theme.borderRadius.md,
-    padding: theme.spacing.lg,
-    minHeight: 200,
-    textAlignVertical: 'top',
+    backgroundColor: 'rgba(255,255,255,0.9)',
+    borderRadius: theme.borderRadius.lg,
     borderWidth: 1,
     borderColor: theme.colors.borderSoft,
-    ...theme.shadows.soft,
-  },
-  contentCard: {
-    backgroundColor: theme.colors.card,
-    borderRadius: theme.borderRadius.md,
-    padding: theme.spacing.lg,
-    borderWidth: 1,
-    borderColor: theme.colors.borderSoft,
-    ...theme.shadows.soft,
-  },
-  metaSection: {
-    marginTop: theme.spacing.lg,
     padding: theme.spacing.md,
-    backgroundColor: theme.colors.card,
+    minHeight: 220,
+  },
+  sourceCard: {
+    marginTop: theme.spacing.md,
+    backgroundColor: 'rgba(255,255,255,0.72)',
     borderRadius: theme.borderRadius.md,
     borderWidth: 1,
     borderColor: theme.colors.borderSoft,
-    ...theme.shadows.soft,
+    padding: theme.spacing.md,
   },
-  metaLabel: {
+  sourceLabel: {
     ...theme.typography.caption,
     color: theme.colors.textSubtle,
-    marginBottom: theme.spacing.xs,
     textTransform: 'uppercase',
-    letterSpacing: 0.6,
+    marginBottom: 4,
   },
-  metaValue: {
+  sourceValue: {
     ...theme.typography.body,
     color: theme.colors.text,
+  },
+  dateWrap: {
+    marginTop: theme.spacing.md,
+    alignItems: 'center',
+  },
+  dateText: {
+    ...theme.typography.caption,
+    color: theme.colors.textSubtle,
   },
   footer: {
     paddingHorizontal: theme.spacing.lg,
-    paddingVertical: theme.spacing.md,
+    paddingTop: theme.spacing.sm,
+    paddingBottom: theme.spacing.lg,
   },
   loadingContainer: {
     flex: 1,
-    justifyContent: 'center',
     alignItems: 'center',
+    justifyContent: 'center',
   },
   loadingText: {
     ...theme.typography.body,

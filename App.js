@@ -44,7 +44,7 @@ export default function App() {
     <ErrorBoundary>
       <GestureHandlerRootView style={{ flex: 1 }}>
         <NavigationContainer>
-          <StatusBar style="light" />
+          <StatusBar style="dark" />
           <Stack.Navigator
             screenOptions={{
               headerShown: false,
