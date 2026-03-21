@@ -10,6 +10,24 @@ interface StatusRequest {
   reelId?: number
 }
 
+async function getAuthenticatedUserId(req: Request, supabaseUrl: string, anonKey: string): Promise<string | null> {
+  const authHeader = req.headers.get("Authorization")
+  if (!authHeader) return null
+
+  const userClient = createClient(supabaseUrl, anonKey, {
+    global: {
+      headers: { Authorization: authHeader },
+    },
+  })
+
+  const { data, error } = await userClient.auth.getUser()
+  if (error || !data?.user?.id) {
+    return null
+  }
+
+  return data.user.id
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders })
@@ -29,10 +47,18 @@ serve(async (req) => {
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY")
     const dbKey = serviceRoleKey || anonKey
 
-    if (!supabaseUrl || !dbKey) {
+    if (!supabaseUrl || !dbKey || !anonKey) {
       return new Response(
-        JSON.stringify({ error: "Missing Supabase runtime configuration (SUPABASE_URL / key)" }),
+        JSON.stringify({ error: "Missing Supabase runtime configuration (SUPABASE_URL / SUPABASE_ANON_KEY / key)" }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      )
+    }
+
+    const userId = await getAuthenticatedUserId(req, supabaseUrl, anonKey)
+    if (!userId) {
+      return new Response(
+        JSON.stringify({ error: "Unauthorized" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       )
     }
 
@@ -41,6 +67,7 @@ serve(async (req) => {
       .from("reels")
       .select("*")
       .eq("id", reelId)
+      .eq("owner_id", userId)
       .single()
 
     if (error || !data) {

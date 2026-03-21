@@ -7,6 +7,7 @@ import {
   TextInput,
   Alert,
   Animated,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button } from '../components/Button';
@@ -176,7 +177,7 @@ export const NoteDetailScreen = ({ route, navigation }: any) => {
         <ScrollView
           style={styles.content}
           contentContainerStyle={styles.contentContainer}
-          showsVerticalScrollIndicator={false}
+          showsVerticalScrollIndicator={Platform.OS === 'web'}
         >
           <View style={styles.heroCard}>
             <Text style={styles.eyebrow}>NOTE DETAIL</Text>

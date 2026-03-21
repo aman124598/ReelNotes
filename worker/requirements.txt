@@ -3,3 +3,5 @@ uvicorn[standard]==0.35.0
 supabase==2.18.1
 requests==2.32.5
 faster-whisper==1.1.1
+pytesseract==0.3.13
+Pillow==11.3.0

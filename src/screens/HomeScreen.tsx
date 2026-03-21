@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, FlatList, Alert, Animated, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, FlatList, Alert, Animated, ActivityIndicator, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { NoteCard } from '../components/NoteCard';
@@ -19,7 +19,12 @@ export const HomeScreen = ({ navigation }: any) => {
   const [loadingMore, setLoadingMore] = useState(false);
   const [currentPage, setCurrentPage] = useState(0);
   const [hasMore, setHasMore] = useState(true);
+  const [showScrollTop, setShowScrollTop] = useState(false);
   const fadeAnim = useRef(new Animated.Value(0)).current;
+  const listRef = useRef<FlatList<Note>>(null);
+  const updateScrollTopVisibility = useCallback((yOffset: number) => {
+    setShowScrollTop(yOffset > 360);
+  }, []);
 
   useEffect(() => {
     Animated.timing(fadeAnim, {
@@ -33,6 +38,7 @@ export const HomeScreen = ({ navigation }: any) => {
     const nextPage = reset ? 0 : currentPage;
 
     if (reset) {
+      if (loading) return;
       setLoading(true);
     } else {
       if (loading || loadingMore || !hasMore) return;
@@ -63,6 +69,8 @@ export const HomeScreen = ({ navigation }: any) => {
 
   useFocusEffect(
     useCallback(() => {
+      scrollToTop(false);
+      setShowScrollTop(false);
       setCurrentPage(0);
       setHasMore(true);
       setNotes([]);
@@ -79,6 +87,8 @@ export const HomeScreen = ({ navigation }: any) => {
         onPress: async () => {
           const success = await deleteNote(id);
           if (success) {
+            scrollToTop(false);
+            setShowScrollTop(false);
             setCurrentPage(0);
             setHasMore(true);
             setNotes([]);
@@ -97,12 +107,17 @@ export const HomeScreen = ({ navigation }: any) => {
   const failedCount = notes.filter((note) => note.status === 'failed').length;
   const readyCount = notes.filter((note) => note.status === 'ready').length;
 
+  const scrollToTop = (animated: boolean) => {
+    listRef.current?.scrollToOffset({ offset: 0, animated });
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <ScreenBackdrop />
 
       <Animated.View style={[styles.listWrapper, { opacity: fadeAnim }]}>
         <FlatList
+          ref={listRef}
           data={notes}
           renderItem={({ item }) => (
             <NoteCard
@@ -114,10 +129,13 @@ export const HomeScreen = ({ navigation }: any) => {
           keyExtractor={(item) => item.id.toString()}
           style={styles.list}
           contentContainerStyle={isListEmpty ? styles.listContentEmpty : styles.listContent}
-          showsVerticalScrollIndicator={false}
-          scrollEnabled={!isListEmpty}
-          onEndReached={() => loadNotes(false)}
-          onEndReachedThreshold={0.45}
+          showsVerticalScrollIndicator
+          scrollEnabled
+          onScroll={(event) => {
+            const y = event.nativeEvent.contentOffset.y;
+            updateScrollTopVisibility(y);
+          }}
+          scrollEventThrottle={16}
           ListHeaderComponent={
             <View>
               <View style={styles.heroCard}>
@@ -130,6 +148,12 @@ export const HomeScreen = ({ navigation }: any) => {
                   <View style={styles.countPill}>
                     <Text style={styles.countText}>{noteCount} saved</Text>
                   </View>
+                  <Button
+                    title="Add New Note"
+                    variant="primary"
+                    style={styles.addNewButton}
+                    onPress={() => navigation.navigate('AddNote')}
+                  />
                 </View>
               </View>
 
@@ -157,12 +181,20 @@ export const HomeScreen = ({ navigation }: any) => {
             </View>
           }
           ListFooterComponent={
-            loadingMore ? (
-              <View style={styles.footerLoader}>
-                <ActivityIndicator color={theme.colors.primary} />
-                <Text style={styles.footerLoaderText}>Loading more notes...</Text>
-              </View>
-            ) : null
+            <View style={styles.footerArea}>
+              {loadingMore ? (
+                <View style={styles.footerLoader}>
+                  <ActivityIndicator color={theme.colors.primary} />
+                  <Text style={styles.footerLoaderText}>Loading more notes...</Text>
+                </View>
+              ) : null}
+
+              {!loading && !loadingMore && hasMore && !isListEmpty ? (
+                <View style={styles.loadMoreWrap}>
+                  <Button title="Load More Recipes" onPress={() => loadNotes(false)} />
+                </View>
+              ) : null}
+            </View>
           }
           ListEmptyComponent={
             <View style={styles.emptyState}>
@@ -175,6 +207,17 @@ export const HomeScreen = ({ navigation }: any) => {
           }
         />
       </Animated.View>
+
+      {showScrollTop ? (
+        <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel="Scroll to top"
+          style={styles.scrollTopButton}
+          onPress={() => scrollToTop(true)}
+        >
+          <Text style={styles.scrollTopButtonText}>↑</Text>
+        </TouchableOpacity>
+      ) : null}
 
     </SafeAreaView>
   );
@@ -232,6 +275,12 @@ const styles = StyleSheet.create({
     marginTop: theme.spacing.lg,
     flexDirection: 'row',
     alignItems: 'center',
+    gap: theme.spacing.sm,
+    flexWrap: 'wrap',
+  },
+  addNewButton: {
+    minHeight: 40,
+    paddingVertical: 8,
   },
   countPill: {
     backgroundColor: 'rgba(255,255,255,0.9)',
@@ -310,9 +359,34 @@ const styles = StyleSheet.create({
     paddingVertical: theme.spacing.lg,
     alignItems: 'center',
   },
+  footerArea: {
+    paddingBottom: theme.spacing.sm,
+  },
   footerLoaderText: {
     ...theme.typography.caption,
     color: theme.colors.textSubtle,
     marginTop: 4,
+  },
+  loadMoreWrap: {
+    paddingTop: theme.spacing.sm,
+  },
+  scrollTopButton: {
+    position: 'absolute',
+    right: theme.spacing.lg,
+    bottom: 24,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(255,255,255,0.92)',
+    borderWidth: 1,
+    borderColor: theme.colors.borderSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...theme.shadows.soft,
+  },
+  scrollTopButtonText: {
+    ...theme.typography.title,
+    color: theme.colors.text,
+    lineHeight: 20,
   },
 });

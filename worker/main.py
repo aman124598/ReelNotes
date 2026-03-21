@@ -6,13 +6,16 @@ import subprocess
 import tempfile
 import time
 import base64
+import threading
 from urllib.parse import quote
 from typing import Any
 
 import requests
+import pytesseract
 from fastapi import FastAPI, Header, HTTPException
 from faster_whisper import WhisperModel
 from dotenv import load_dotenv
+from PIL import Image
 from supabase import Client, create_client
 
 load_dotenv()
@@ -27,16 +30,31 @@ WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "small.en")
 WHISPER_FALLBACK_MODEL_SIZE = os.getenv("WHISPER_FALLBACK_MODEL_SIZE", "tiny")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 YTDLP_COOKIES_FILE = os.getenv("YTDLP_COOKIES_FILE", "").strip()
+OCR_ENABLED = os.getenv("OCR_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+OCR_FRAME_INTERVAL_SECONDS = float(os.getenv("OCR_FRAME_INTERVAL_SECONDS", "1.5"))
+OCR_MAX_FRAMES = int(os.getenv("OCR_MAX_FRAMES", "8"))
+OCR_LANG = os.getenv("OCR_LANG", "eng")
+OCR_MIN_LINE_LENGTH = int(os.getenv("OCR_MIN_LINE_LENGTH", "3"))
+FORCE_AUDIO_TRANSCRIBE = os.getenv("FORCE_AUDIO_TRANSCRIBE", "false").strip().lower() in {"1", "true", "yes", "on"}
+TESSERACT_CMD = os.getenv("TESSERACT_CMD", "").strip()
+AUTO_POLL_ENABLED = os.getenv("AUTO_POLL_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+AUTO_POLL_INTERVAL_SECONDS = float(os.getenv("AUTO_POLL_INTERVAL_SECONDS", "5"))
+AUTO_POLL_ERROR_BACKOFF_SECONDS = float(os.getenv("AUTO_POLL_ERROR_BACKOFF_SECONDS", "8"))
 
 if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
   raise RuntimeError("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required")
 
 if not GROQ_API_KEY:
-  raise RuntimeError("GROQ_API_KEY is required")
+  print("[worker] Warning: GROQ_API_KEY is missing. Falling back to local heuristic recipe parsing.")
+
+if TESSERACT_CMD:
+  pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 app = FastAPI(title="ReelNotes Worker")
 _whisper_model: WhisperModel | None = None
+_auto_poll_thread: threading.Thread | None = None
+_auto_poll_started = False
 
 
 def _decode_jwt_role(token: str) -> str:
@@ -184,6 +202,70 @@ def _download_audio(temp_dir: str, url: str) -> str:
   raise RuntimeError("Audio file download failed")
 
 
+def _download_video(temp_dir: str, url: str) -> str:
+  output_template = os.path.join(temp_dir, "video.%(ext)s")
+  _run_cmd([
+    *_ytdlp_prefix(),
+    "-f",
+    "mp4/bestvideo+bestaudio/best",
+    "-o",
+    output_template,
+    url,
+  ], cwd=temp_dir)
+
+  for name in os.listdir(temp_dir):
+    if name.startswith("video."):
+      return os.path.join(temp_dir, name)
+  raise RuntimeError("Video file download failed")
+
+
+def _extract_ocr_text(temp_dir: str, url: str) -> str:
+  if not OCR_ENABLED:
+    return ""
+
+  if OCR_MAX_FRAMES <= 0:
+    return ""
+
+  video_path = _download_video(temp_dir, url)
+  frame_pattern = os.path.join(temp_dir, "ocr_frame_%03d.jpg")
+  fps = 1.0 / max(OCR_FRAME_INTERVAL_SECONDS, 0.2)
+  _run_cmd([
+    "ffmpeg",
+    "-y",
+    "-i",
+    video_path,
+    "-vf",
+    f"fps={fps}",
+    "-frames:v",
+    str(OCR_MAX_FRAMES),
+    frame_pattern,
+  ])
+
+  ocr_lines: list[str] = []
+  seen = set()
+  for name in sorted(os.listdir(temp_dir)):
+    if not name.startswith("ocr_frame_") or not name.endswith(".jpg"):
+      continue
+
+    frame_path = os.path.join(temp_dir, name)
+    try:
+      text = pytesseract.image_to_string(Image.open(frame_path), lang=OCR_LANG)
+    except Exception:
+      continue
+
+    for raw_line in text.splitlines():
+      line = re.sub(r"\s+", " ", raw_line).strip()
+      if len(line) < OCR_MIN_LINE_LENGTH:
+        continue
+      key = line.lower()
+      if key in seen:
+        continue
+      seen.add(key)
+      ocr_lines.append(line)
+
+  return "\n".join(ocr_lines)
+
+
 def _transcribe_audio(audio_path: str) -> str:
   try:
     model = _load_whisper(WHISPER_MODEL_SIZE)
@@ -223,6 +305,9 @@ def _parse_json_from_model_response(content: str) -> dict[str, Any]:
 
 
 def _call_groq(prompt: str) -> str:
+  if not GROQ_API_KEY:
+    raise RuntimeError("GROQ_API_KEY is not configured")
+
   last_error = "Unknown Groq error"
   for attempt in range(3):
     response = requests.post(
@@ -294,7 +379,80 @@ def _validate_recipe_schema(recipe: dict[str, Any]) -> dict[str, Any]:
   return recipe
 
 
+def _extract_recipe_open_source(transcript: str) -> dict[str, Any]:
+  lines = [re.sub(r"\s+", " ", line).strip() for line in transcript.splitlines()]
+  lines = [line for line in lines if line]
+
+  dish_name = _extract_title_from_text(transcript)
+  ingredients: list[dict[str, Any]] = []
+  steps: list[dict[str, Any]] = []
+
+  in_ingredients = False
+  in_steps = False
+
+  ingredient_line_re = re.compile(r"^([\-\*•]|\d+[\.)]|\d+\s?(g|kg|ml|l|tbsp|tsp|cup|cups|oz|lb)\b)", re.IGNORECASE)
+  step_line_re = re.compile(r"^(step\s*\d+[:.)-]?|\d+[\.)-])", re.IGNORECASE)
+
+  for line in lines:
+    lower = line.lower()
+
+    if "ingredient" in lower:
+      in_ingredients = True
+      in_steps = False
+      continue
+    if "instruction" in lower or "method" in lower or "direction" in lower or "step" == lower:
+      in_steps = True
+      in_ingredients = False
+      continue
+
+    if in_ingredients or ingredient_line_re.match(line):
+      cleaned = re.sub(r"^[\-\*•\d\.)\s]+", "", line).strip()
+      if cleaned:
+        ingredients.append({"item": cleaned, "quantity": None, "notes": None})
+      continue
+
+    if in_steps or step_line_re.match(line):
+      cleaned = re.sub(r"^(step\s*\d+[:.)-]?|\d+[\.)-])\s*", "", line, flags=re.IGNORECASE).strip()
+      if cleaned:
+        steps.append({"order": len(steps) + 1, "instruction": cleaned, "time": None, "heat": None})
+
+  if not steps:
+    for sentence in re.split(r"(?<=[.!?])\s+", transcript):
+      text = sentence.strip()
+      if len(text) < 15:
+        continue
+      if len(steps) >= 8:
+        break
+      steps.append({"order": len(steps) + 1, "instruction": text, "time": None, "heat": None})
+
+  if not ingredients and lines:
+    fallback_ingredients = []
+    for line in lines[:40]:
+      if ingredient_line_re.match(line):
+        cleaned = re.sub(r"^[\-\*•\d\.)\s]+", "", line).strip()
+        if cleaned:
+          fallback_ingredients.append({"item": cleaned, "quantity": None, "notes": None})
+      if len(fallback_ingredients) >= 20:
+        break
+    ingredients = fallback_ingredients
+
+  recipe = {
+    "dish_name": dish_name,
+    "servings": None,
+    "ingredients": ingredients,
+    "steps": steps,
+    "tips": [],
+    "total_time": None,
+    "confidence": 0.45 if steps else 0.25,
+    "missing_info": ["Parsed with local heuristic parser; review quantities and ordering."],
+  }
+  return _validate_recipe_schema(recipe)
+
+
 def _extract_recipe(transcript: str) -> dict[str, Any]:
+  if not GROQ_API_KEY:
+    return _extract_recipe_open_source(transcript)
+
   base_prompt = f"""
 Extract only the actionable food recipe from this Instagram reel transcript.
 Ignore jokes, intros, sponsorships, and unrelated chatter.
@@ -517,16 +675,23 @@ def _process_one_job() -> dict[str, Any]:
 
     with tempfile.TemporaryDirectory() as temp_dir:
       captions = _load_caption_text(temp_dir, reel_url)
+      ocr_text = ""
       transcript = ""
 
-      if not captions:
+      if OCR_ENABLED:
+        try:
+          ocr_text = _extract_ocr_text(temp_dir, reel_url)
+        except Exception as ocr_error:
+          print(f"[worker] OCR extraction failed for reel {reel_id}: {ocr_error}")
+
+      if FORCE_AUDIO_TRANSCRIBE or not captions:
         try:
           audio_path = _download_audio(temp_dir, reel_url)
           transcript = _transcribe_audio(audio_path)
         except Exception as audio_error:
           print(f"[worker] Audio extraction failed for reel {reel_id}: {audio_error}")
 
-      combined = _merge_text(captions, transcript)
+      combined = _merge_text(_merge_text(captions, ocr_text), transcript)
       if not combined:
         combined = _oembed_caption(reel_url)
       if not combined:
@@ -545,6 +710,8 @@ def _process_one_job() -> dict[str, Any]:
         "title": recipe.get("dish_name") or "Untitled Recipe",
         "content_type": "Recipe",
         "structured_text": structured_text,
+        "raw_transcript": transcript,
+        "raw_ocr": ocr_text,
         "source_transcript": combined,
         "recipe_json": recipe,
         "status": "ready",
@@ -564,11 +731,40 @@ def _process_one_job() -> dict[str, Any]:
 
 
 def _dependency_status() -> dict[str, bool]:
+  tesseract_available = bool(TESSERACT_CMD) or shutil.which("tesseract") is not None
   return {
     "yt-dlp": shutil.which("yt-dlp") is not None,
     "ffmpeg": shutil.which("ffmpeg") is not None,
+    "tesseract": tesseract_available,
     "cookies_file": bool(YTDLP_COOKIES_FILE),
   }
+
+def _auto_poll_loop() -> None:
+  while True:
+    try:
+      result = _process_one_job()
+      if result.get("status") == "idle":
+        time.sleep(max(0.5, AUTO_POLL_INTERVAL_SECONDS))
+      else:
+        # When work is found, keep draining the queue quickly.
+        time.sleep(0.25)
+    except Exception as poll_error:
+      print(f"[worker] auto poll loop error: {poll_error}")
+      time.sleep(max(1.0, AUTO_POLL_ERROR_BACKOFF_SECONDS))
+
+
+@app.on_event("startup")
+def start_auto_poll_worker() -> None:
+  global _auto_poll_thread, _auto_poll_started
+  if not AUTO_POLL_ENABLED or _auto_poll_started:
+    return
+  _auto_poll_started = True
+  _auto_poll_thread = threading.Thread(target=_auto_poll_loop, name="reelnotes-auto-poll", daemon=True)
+  _auto_poll_thread.start()
+  print(
+    f"[worker] Auto polling enabled (idle interval={AUTO_POLL_INTERVAL_SECONDS}s, "
+    f"error backoff={AUTO_POLL_ERROR_BACKOFF_SECONDS}s)"
+  )
 
 
 @app.get("/health")
@@ -589,7 +785,16 @@ def diagnostics(authorization: str | None = Header(default=None)) -> dict[str, A
     "max_duration_seconds": MAX_DURATION_SECONDS,
     "whisper_model": WHISPER_MODEL_SIZE,
     "groq_model": GROQ_MODEL,
+    "ocr_enabled": OCR_ENABLED,
+    "ocr_frame_interval_seconds": OCR_FRAME_INTERVAL_SECONDS,
+    "ocr_max_frames": OCR_MAX_FRAMES,
+    "ocr_lang": OCR_LANG,
+    "force_audio_transcribe": FORCE_AUDIO_TRANSCRIBE,
+    "has_tesseract_cmd_override": bool(TESSERACT_CMD),
     "yt_dlp_cookies_file": YTDLP_COOKIES_FILE or None,
+    "auto_poll_enabled": AUTO_POLL_ENABLED,
+    "auto_poll_started": _auto_poll_started,
+    "auto_poll_interval_seconds": AUTO_POLL_INTERVAL_SECONDS,
   }
 
 

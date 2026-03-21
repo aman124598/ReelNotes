@@ -10,13 +10,44 @@ if (!supabaseUrl || !supabaseKey) {
   console.warn('Supabase keys are missing! Check your .env file.');
 }
 
-export const supabase = (supabaseUrl && supabaseKey) 
+export const supabase = (supabaseUrl && supabaseKey)
   ? createClient(supabaseUrl, supabaseKey)
   // Create a mock client or throw a handled error when used, rather than crashing on init
   : {
-      from: () => ({ select: () => ({ data: [], error: { message: 'Supabase keys missing' } }) }),
-      functions: { invoke: async () => ({ error: { message: 'Supabase keys missing' } }) }
-    } as any;
+    from: () => ({ select: () => ({ data: [], error: { message: 'Supabase keys missing' } }) }),
+    functions: { invoke: async () => ({ error: { message: 'Supabase keys missing' } }) }
+  } as any;
+
+let authInitPromise: Promise<void> | null = null;
+
+const ensureUserSession = async (): Promise<void> => {
+  if (!supabaseUrl || !supabaseKey) return;
+  if (authInitPromise) {
+    await authInitPromise;
+    return;
+  }
+
+  authInitPromise = (async () => {
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError) {
+      console.error('Error checking auth session:', sessionError);
+      return;
+    }
+
+    if (sessionData?.session) return;
+
+    const { error: anonError } = await supabase.auth.signInAnonymously();
+    if (anonError) {
+      console.error('Anonymous sign-in failed:', anonError);
+    }
+  })();
+
+  try {
+    await authInitPromise;
+  } finally {
+    authInitPromise = null;
+  }
+};
 
 const normalizeNote = (note: any): Note => ({
   ...note,
@@ -27,9 +58,28 @@ const normalizeNote = (note: any): Note => ({
 });
 
 const hasMeaningfulText = (value: unknown): boolean => normalizeText(value, '').trim().length > 0;
+const PROCESSING_PLACEHOLDER_TEXT = 'processing speech and extracting recipe notes...';
+
+const shouldHideProcessedEmptyNote = (note: Note): boolean => {
+  if (note.status !== 'ready') return false;
+
+  const structuredText = normalizeText(note.structured_text, '').trim();
+  const title = normalizeText(note.title, '').trim().toLowerCase();
+  const processingPlaceholder = structuredText.toLowerCase() === PROCESSING_PLACEHOLDER_TEXT;
+  const noUsableInfo = !hasMeaningfulText(structuredText);
+  const noSourceData = !hasMeaningfulText(note.raw_transcript) && !hasMeaningfulText(note.raw_ocr) && !hasMeaningfulText(note.source_transcript);
+  const stillGenericTitle = title === 'processing reel';
+
+  return noUsableInfo || (processingPlaceholder && noSourceData) || (stillGenericTitle && noSourceData);
+};
+
+const toVisibleNotes = (rows: any[] | null | undefined): Note[] =>
+  (rows || []).map(normalizeNote).filter((note) => !shouldHideProcessedEmptyNote(note));
 
 export const enqueueReel = async (url: string): Promise<{ reelId?: number; status?: Note['status']; error?: string }> => {
   try {
+    await ensureUserSession();
+
     const { data, error } = await supabase.functions.invoke('enqueue-reel', {
       body: { url },
     });
@@ -60,6 +110,8 @@ export const enqueueReel = async (url: string): Promise<{ reelId?: number; statu
 
 export const retryReelProcessing = async (reelId: number): Promise<{ status?: string; error?: string }> => {
   try {
+    await ensureUserSession();
+
     const { data, error } = await supabase.functions.invoke('enqueue-reel', {
       body: { reelId, retry: true },
     });
@@ -87,6 +139,8 @@ export const retryReelProcessing = async (reelId: number): Promise<{ status?: st
 
 // Database operations using Supabase
 export const getAllNotes = async (): Promise<Note[]> => {
+  await ensureUserSession();
+
   const { data, error } = await supabase
     .from('reels')
     .select('*')
@@ -97,10 +151,12 @@ export const getAllNotes = async (): Promise<Note[]> => {
     return [];
   }
 
-  return (data || []).map(normalizeNote);
+  return toVisibleNotes(data);
 };
 
 export const getNotesPage = async (page: number, pageSize: number): Promise<{ notes: Note[]; hasMore: boolean }> => {
+  await ensureUserSession();
+
   const from = page * pageSize;
   const to = from + pageSize - 1;
 
@@ -115,11 +171,13 @@ export const getNotesPage = async (page: number, pageSize: number): Promise<{ no
     return { notes: [], hasMore: false };
   }
 
-  const notes = (data || []).map(normalizeNote);
-  return { notes, hasMore: notes.length === pageSize };
+  const notes = toVisibleNotes(data);
+  return { notes, hasMore: (data || []).length === pageSize };
 };
 
 export const getNoteById = async (id: number): Promise<Note | null> => {
+  await ensureUserSession();
+
   const { data, error } = await supabase
     .from('reels')
     .select('*')
@@ -135,6 +193,8 @@ export const getNoteById = async (id: number): Promise<Note | null> => {
 };
 
 export const searchNotes = async (query: string): Promise<Note[]> => {
+  await ensureUserSession();
+
   const { data, error } = await supabase
     .from('reels')
     .select('*')
@@ -146,10 +206,12 @@ export const searchNotes = async (query: string): Promise<Note[]> => {
     return [];
   }
 
-  return (data || []).map(normalizeNote);
+  return toVisibleNotes(data);
 };
 
 export const searchNotesPage = async (query: string, page: number, pageSize: number): Promise<{ notes: Note[]; hasMore: boolean }> => {
+  await ensureUserSession();
+
   const from = page * pageSize;
   const to = from + pageSize - 1;
 
@@ -165,11 +227,19 @@ export const searchNotesPage = async (query: string, page: number, pageSize: num
     return { notes: [], hasMore: false };
   }
 
-  const notes = (data || []).map(normalizeNote);
-  return { notes, hasMore: notes.length === pageSize };
+  const notes = toVisibleNotes(data);
+  return { notes, hasMore: (data || []).length === pageSize };
 };
 
 export const addNote = async (note: Omit<Note, 'id' | 'created_at' | 'updated_at'>): Promise<number | null> => {
+  await ensureUserSession();
+
+  const { data: userData, error: userError } = await supabase.auth.getUser();
+  if (userError || !userData?.user?.id) {
+    console.error('Unable to resolve current user for note insert:', userError);
+    return null;
+  }
+
   const normalizedStructuredText = normalizeText(note.structured_text, '');
   const normalizedStatus = normalizeText(note.status, 'queued');
 
@@ -181,6 +251,7 @@ export const addNote = async (note: Omit<Note, 'id' | 'created_at' | 'updated_at
 
   const payload = {
     ...note,
+    owner_id: userData.user.id,
     title: normalizeText(note.title, 'Untitled Note'),
     content_type: normalizeText(note.content_type, 'Recipe'),
     structured_text: normalizedStructuredText,
@@ -202,6 +273,8 @@ export const addNote = async (note: Omit<Note, 'id' | 'created_at' | 'updated_at
 };
 
 export const updateNote = async (id: number, updates: Partial<Note>): Promise<boolean> => {
+  await ensureUserSession();
+
   const normalizedUpdates: Partial<Note> = { ...updates };
 
   if ('structured_text' in updates) {
@@ -235,6 +308,8 @@ export const updateNote = async (id: number, updates: Partial<Note>): Promise<bo
 };
 
 export const deleteNote = async (id: number): Promise<boolean> => {
+  await ensureUserSession();
+
   const { error } = await supabase
     .from('reels')
     .delete()
@@ -249,6 +324,8 @@ export const deleteNote = async (id: number): Promise<boolean> => {
 };
 
 export const getNotesByContentType = async (contentType: string): Promise<Note[]> => {
+  await ensureUserSession();
+
   const { data, error } = await supabase
     .from('reels')
     .select('*')
@@ -260,5 +337,5 @@ export const getNotesByContentType = async (contentType: string): Promise<Note[]
     return [];
   }
 
-  return (data || []).map(normalizeNote);
+  return toVisibleNotes(data);
 };

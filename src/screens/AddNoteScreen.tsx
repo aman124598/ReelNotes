@@ -136,7 +136,7 @@ export const AddNoteScreen = ({ navigation }: any) => {
             ref={scrollRef}
             style={styles.content}
             contentContainerStyle={styles.contentContainer}
-            showsVerticalScrollIndicator={false}
+            showsVerticalScrollIndicator={Platform.OS === 'web'}
             keyboardShouldPersistTaps="handled"
           >
             <View style={styles.sectionCard}>

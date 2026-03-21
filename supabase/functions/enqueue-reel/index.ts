@@ -22,6 +22,24 @@ function isValidInstagramUrl(url: string): boolean {
   return INSTAGRAM_PATTERNS.some((pattern) => pattern.test(url))
 }
 
+async function getAuthenticatedUserId(req: Request, supabaseUrl: string, anonKey: string): Promise<string | null> {
+  const authHeader = req.headers.get("Authorization")
+  if (!authHeader) return null
+
+  const userClient = createClient(supabaseUrl, anonKey, {
+    global: {
+      headers: { Authorization: authHeader },
+    },
+  })
+
+  const { data, error } = await userClient.auth.getUser()
+  if (error || !data?.user?.id) {
+    return null
+  }
+
+  return data.user.id
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders })
@@ -34,10 +52,18 @@ serve(async (req) => {
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY")
     const dbKey = serviceRoleKey || anonKey
 
-    if (!supabaseUrl || !dbKey) {
+    if (!supabaseUrl || !dbKey || !anonKey) {
       return new Response(
-        JSON.stringify({ error: "Missing Supabase runtime configuration (SUPABASE_URL / key)" }),
+        JSON.stringify({ error: "Missing Supabase runtime configuration (SUPABASE_URL / SUPABASE_ANON_KEY / key)" }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      )
+    }
+
+    const userId = await getAuthenticatedUserId(req, supabaseUrl, anonKey)
+    if (!userId) {
+      return new Response(
+        JSON.stringify({ error: "Unauthorized" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       )
     }
 
@@ -48,6 +74,7 @@ serve(async (req) => {
         .from("reels")
         .select("id")
         .eq("id", reelId)
+        .eq("owner_id", userId)
         .single()
 
       if (reelError || !reel) {
@@ -61,11 +88,35 @@ serve(async (req) => {
         .from("reels")
         .update({ status: "queued", processing_error: null })
         .eq("id", reelId)
+        .eq("owner_id", userId)
 
       if (updateError) {
         return new Response(
           JSON.stringify({ error: updateError.message }),
           { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        )
+      }
+
+      const { data: existingActiveJob, error: existingJobError } = await supabase
+        .from("reel_jobs")
+        .select("id")
+        .eq("reel_id", reelId)
+        .in("status", ["queued", "processing"])
+        .order("created_at", { ascending: true })
+        .limit(1)
+        .maybeSingle()
+
+      if (existingJobError) {
+        return new Response(
+          JSON.stringify({ error: existingJobError.message }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        )
+      }
+
+      if (existingActiveJob) {
+        return new Response(
+          JSON.stringify({ reelId, status: "queued" }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         )
       }
 
@@ -96,6 +147,7 @@ serve(async (req) => {
     const { data: newReel, error: reelInsertError } = await supabase
       .from("reels")
       .insert({
+        owner_id: userId,
         url,
         title: "Processing Reel",
         content_type: "Recipe",

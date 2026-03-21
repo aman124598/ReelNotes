@@ -3,15 +3,17 @@
 This service processes queued Instagram reel jobs:
 1. Claims one queued job atomically from Supabase.
 2. Pulls captions with `yt-dlp`.
-3. Falls back to audio transcription with `ffmpeg` + `faster-whisper`.
-4. Extracts recipe JSON using Groq.
-5. Saves `recipe_json`, `source_transcript`, and `structured_text` back to `reels`.
+3. Extracts on-screen text via OCR from sampled video frames.
+4. Falls back to audio transcription with `ffmpeg` + `faster-whisper`.
+5. Combines captions + OCR + transcript, then extracts structured recipe JSON.
+6. Saves `recipe_json`, `source_transcript`, and `structured_text` back to `reels`.
 
 ## Prerequisites
 
 - Python 3.10+
 - `yt-dlp` installed and available in PATH
 - `ffmpeg` installed and available in PATH
+- `tesseract` installed and available in PATH (or set `TESSERACT_CMD`)
 
 ## Setup
 
@@ -43,6 +45,12 @@ Run loop (up to 20 jobs):
 curl -X POST "http://localhost:8000/worker/run-loop?max_jobs=20&sleep_seconds=1" -H "Authorization: Bearer YOUR_WORKER_SECRET"
 ```
 
+By default, the worker now auto-polls queued jobs in the background while running.
+Configure with:
+- `AUTO_POLL_ENABLED=true|false`
+- `AUTO_POLL_INTERVAL_SECONDS=5`
+- `AUTO_POLL_ERROR_BACKOFF_SECONDS=8`
+
 Check worker readiness and dependency status:
 
 ```bash
@@ -55,3 +63,11 @@ Optional reliability boost for Instagram extraction:
 
 Important:
 - `SUPABASE_SERVICE_ROLE_KEY` must be your actual Supabase **service_role** key, not anon key.
+
+## OCR and parsing behavior
+
+- `OCR_ENABLED=true` enables extraction of on-screen recipe text from video frames.
+- `OCR_FRAME_INTERVAL_SECONDS` controls frame sampling rate.
+- `OCR_MAX_FRAMES` limits processing cost per reel.
+- `FORCE_AUDIO_TRANSCRIBE=true` runs audio transcription even when captions exist.
+- If `GROQ_API_KEY` is missing, the worker falls back to a local heuristic parser for recipe structuring.
