@@ -157,7 +157,7 @@ def _load_caption_text(temp_dir: str, url: str) -> str:
       url,
     ], cwd=temp_dir, timeout=DOWNLOAD_TIMEOUT_SECONDS)
   except Exception:
-    # Caption extraction is optional; audio fallback should still run.
+    # Caption extraction is optional; fallback text sources can still run.
     return ""
 
   for name in os.listdir(temp_dir):
@@ -247,6 +247,29 @@ def _merge_text(primary: str, secondary: str) -> str:
       seen.add(key)
       merged.append(line)
   return "\n".join(merged)
+
+
+def _text_from_url_info(info: dict[str, Any]) -> str:
+  if not info:
+    return ""
+
+  blocks: list[str] = []
+  for key in ["description", "title", "fulltitle", "alt_title"]:
+    value = info.get(key)
+    if isinstance(value, str) and value.strip():
+      blocks.append(value.strip())
+
+  uploader = str(info.get("uploader") or info.get("channel") or "").strip()
+  if uploader:
+    blocks.append(f"Creator: {uploader}")
+
+  tags = info.get("tags")
+  if isinstance(tags, list):
+    tag_items = [str(tag).strip() for tag in tags[:25] if str(tag).strip()]
+    if tag_items:
+      blocks.append(f"Tags: {', '.join(tag_items)}")
+
+  return _merge_text("\n".join(blocks), "")
 
 
 def _parse_json_from_model_response(content: str) -> dict[str, Any]:
@@ -692,6 +715,7 @@ def _process_one_job() -> dict[str, Any]:
     if not deps["yt-dlp"]:
       raise RuntimeError("Missing required dependency: yt-dlp is not installed or not in PATH")
 
+    info: dict[str, Any] = {}
     try:
       info = _extract_url_info(reel_url)
       duration = int(info.get("duration") or 0)
@@ -704,6 +728,7 @@ def _process_one_job() -> dict[str, Any]:
     with tempfile.TemporaryDirectory() as temp_dir:
       captions = _load_caption_text(temp_dir, reel_url)
       ocr_text = ""
+      metadata_text = _text_from_url_info(info)
 
       if OCR_ENABLED:
         try:
@@ -711,12 +736,12 @@ def _process_one_job() -> dict[str, Any]:
         except Exception as ocr_error:
           print(f"[worker] OCR extraction failed for reel {reel_id}: {ocr_error}")
 
-      # Keep extraction focused on the original non-audio path: captions + OCR + oEmbed fallback.
-      combined = _merge_text(captions, ocr_text)
+      # Keep extraction focused on non-audio text sources: captions + OCR + metadata + oEmbed fallback.
+      combined = _merge_text(_merge_text(captions, ocr_text), metadata_text)
       if not combined:
         combined = _oembed_caption(reel_url)
       if not combined:
-        raise RuntimeError("No captions or OCR text found")
+        raise RuntimeError("No captions, OCR, or metadata text found")
 
       try:
         recipe = _extract_recipe(combined)
@@ -731,7 +756,7 @@ def _process_one_job() -> dict[str, Any]:
         "title": recipe.get("dish_name") or "Untitled Recipe",
         "content_type": "Recipe",
         "structured_text": structured_text,
-        "raw_transcript": captions,
+        "raw_transcript": captions or metadata_text,
         "raw_ocr": ocr_text,
         "source_transcript": combined,
         "recipe_json": recipe,
