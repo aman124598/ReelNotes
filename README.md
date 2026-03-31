@@ -91,7 +91,7 @@ supabase secrets set SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 #### Groq + Open-Source Worker
 
 1. Use Groq free API key for recipe extraction
-2. Use a Python worker with `yt-dlp`, `ffmpeg`, and `faster-whisper` for speech
+2. Use a Python worker with `yt-dlp` and `ffmpeg` for captions/OCR extraction
 3. Host worker online and connect it to Supabase
 
 ### 4. Configure Environment
@@ -159,7 +159,7 @@ Auto-detected categories:
 ### Backend
 - **Supabase** (database & edge functions)
 - **Groq AI** (LLaMA 3.3 70B)
-- **yt-dlp + ffmpeg + faster-whisper** (speech extraction)
+- **yt-dlp + ffmpeg** (caption and OCR extraction)
 
 ### Architecture
 ```
@@ -246,7 +246,7 @@ MIT License - feel free to use this project for personal or commercial purposes.
 - **Groq** for blazing-fast AI inference
 - **Supabase** for backend infrastructure
 - **Expo** for React Native development platform
-- **Open-source tooling** (`yt-dlp`, `ffmpeg`, `faster-whisper`) for speech extraction
+- **Open-source tooling** (`yt-dlp`, `ffmpeg`) for reel text extraction
 
 ## 📞 Support
 

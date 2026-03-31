@@ -13,7 +13,6 @@ from typing import Any
 import requests
 import pytesseract
 from fastapi import FastAPI, Header, HTTPException
-from faster_whisper import WhisperModel
 from dotenv import load_dotenv
 from PIL import Image
 from supabase import Client, create_client
@@ -26,8 +25,6 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 WORKER_SECRET = os.getenv("WORKER_SECRET", "")
 MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
 MAX_DURATION_SECONDS = int(os.getenv("MAX_DURATION_SECONDS", "180"))
-WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "small.en")
-WHISPER_FALLBACK_MODEL_SIZE = os.getenv("WHISPER_FALLBACK_MODEL_SIZE", "tiny")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 YTDLP_COOKIES_FILE = os.getenv("YTDLP_COOKIES_FILE", "").strip()
 OCR_ENABLED = os.getenv("OCR_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
@@ -35,13 +32,13 @@ OCR_FRAME_INTERVAL_SECONDS = float(os.getenv("OCR_FRAME_INTERVAL_SECONDS", "1.5"
 OCR_MAX_FRAMES = int(os.getenv("OCR_MAX_FRAMES", "8"))
 OCR_LANG = os.getenv("OCR_LANG", "eng")
 OCR_MIN_LINE_LENGTH = int(os.getenv("OCR_MIN_LINE_LENGTH", "3"))
-OCR_RECIPE_SIGNAL_THRESHOLD = int(os.getenv("OCR_RECIPE_SIGNAL_THRESHOLD", "2"))
-FORCE_AUDIO_TRANSCRIBE = os.getenv("FORCE_AUDIO_TRANSCRIBE", "false").strip().lower() in {"1", "true", "yes", "on"}
-PRIORITIZE_OCR_OVER_AUDIO = os.getenv("PRIORITIZE_OCR_OVER_AUDIO", "true").strip().lower() in {"1", "true", "yes", "on"}
 TESSERACT_CMD = os.getenv("TESSERACT_CMD", "").strip()
 AUTO_POLL_ENABLED = os.getenv("AUTO_POLL_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
 AUTO_POLL_INTERVAL_SECONDS = float(os.getenv("AUTO_POLL_INTERVAL_SECONDS", "5"))
 AUTO_POLL_ERROR_BACKOFF_SECONDS = float(os.getenv("AUTO_POLL_ERROR_BACKOFF_SECONDS", "8"))
+DOWNLOAD_TIMEOUT_SECONDS = int(os.getenv("DOWNLOAD_TIMEOUT_SECONDS", "120"))
+INFO_TIMEOUT_SECONDS = int(os.getenv("INFO_TIMEOUT_SECONDS", "30"))
+STALE_PROCESSING_SECONDS = int(os.getenv("STALE_PROCESSING_SECONDS", "300"))
 
 if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
   raise RuntimeError("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required")
@@ -54,7 +51,6 @@ if TESSERACT_CMD:
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 app = FastAPI(title="ReelNotes Worker")
-_whisper_model: WhisperModel | None = None
 _auto_poll_thread: threading.Thread | None = None
 _auto_poll_started = False
 
@@ -86,16 +82,14 @@ def _require_secret(auth_header: str | None) -> None:
     raise HTTPException(status_code=401, detail="Unauthorized")
 
 
-def _load_whisper(model_size: str) -> WhisperModel:
-  global _whisper_model
-  if _whisper_model is None:
-    _whisper_model = WhisperModel(model_size, device="cpu", compute_type="int8")
-  return _whisper_model
-
-
-def _run_cmd(command: list[str], cwd: str | None = None) -> str:
+def _run_cmd(command: list[str], cwd: str | None = None, timeout: int | None = None) -> str:
   try:
-    result = subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=False)
+    result = subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=False, timeout=timeout)
+  except subprocess.TimeoutExpired as error:
+    binary = command[0] if command else "unknown"
+    raise RuntimeError(
+      f"Command timeout: `{binary}` exceeded {timeout}s timeout. Network issue or service blocked access."
+    ) from error
   except FileNotFoundError as error:
     binary = command[0] if command else "unknown"
     raise RuntimeError(
@@ -125,7 +119,7 @@ def _ytdlp_prefix() -> list[str]:
 
 
 def _extract_url_info(url: str) -> dict[str, Any]:
-  output = _run_cmd([*_ytdlp_prefix(), "-J", url])
+  output = _run_cmd([*_ytdlp_prefix(), "-J", url], timeout=INFO_TIMEOUT_SECONDS)
   return json.loads(output)
 
 
@@ -161,7 +155,7 @@ def _load_caption_text(temp_dir: str, url: str) -> str:
       "-o",
       "%(id)s.%(ext)s",
       url,
-    ], cwd=temp_dir)
+    ], cwd=temp_dir, timeout=DOWNLOAD_TIMEOUT_SECONDS)
   except Exception:
     # Caption extraction is optional; audio fallback should still run.
     return ""
@@ -175,35 +169,6 @@ def _load_caption_text(temp_dir: str, url: str) -> str:
   return ""
 
 
-def _download_audio(temp_dir: str, url: str) -> str:
-  output_template = os.path.join(temp_dir, "audio.%(ext)s")
-  _run_cmd([
-    *_ytdlp_prefix(),
-    "-f",
-    "bestaudio/best",
-    "-o",
-    output_template,
-    url,
-  ], cwd=temp_dir)
-  for name in os.listdir(temp_dir):
-    if name.startswith("audio."):
-      input_path = os.path.join(temp_dir, name)
-      out_path = os.path.join(temp_dir, "audio.wav")
-      _run_cmd([
-        "ffmpeg",
-        "-y",
-        "-i",
-        input_path,
-        "-ac",
-        "1",
-        "-ar",
-        "16000",
-        out_path,
-      ])
-      return out_path
-  raise RuntimeError("Audio file download failed")
-
-
 def _download_video(temp_dir: str, url: str) -> str:
   output_template = os.path.join(temp_dir, "video.%(ext)s")
   _run_cmd([
@@ -213,7 +178,7 @@ def _download_video(temp_dir: str, url: str) -> str:
     "-o",
     output_template,
     url,
-  ], cwd=temp_dir)
+  ], cwd=temp_dir, timeout=DOWNLOAD_TIMEOUT_SECONDS)
 
   for name in os.listdir(temp_dir):
     if name.startswith("video."):
@@ -241,7 +206,7 @@ def _extract_ocr_text(temp_dir: str, url: str) -> str:
     "-frames:v",
     str(OCR_MAX_FRAMES),
     frame_pattern,
-  ])
+  ], timeout=DOWNLOAD_TIMEOUT_SECONDS)
 
   ocr_lines: list[str] = []
   seen = set()
@@ -268,18 +233,6 @@ def _extract_ocr_text(temp_dir: str, url: str) -> str:
   return "\n".join(ocr_lines)
 
 
-def _transcribe_audio(audio_path: str) -> str:
-  try:
-    model = _load_whisper(WHISPER_MODEL_SIZE)
-    segments, _ = model.transcribe(audio_path, beam_size=3, language="en")
-  except Exception:
-    model = WhisperModel(WHISPER_FALLBACK_MODEL_SIZE, device="cpu", compute_type="int8")
-    segments, _ = model.transcribe(audio_path, beam_size=2, language="en")
-
-  transcript = " ".join(segment.text.strip() for segment in segments).strip()
-  return transcript
-
-
 def _merge_text(primary: str, secondary: str) -> str:
   merged = []
   seen = set()
@@ -294,52 +247,6 @@ def _merge_text(primary: str, secondary: str) -> str:
       seen.add(key)
       merged.append(line)
   return "\n".join(merged)
-
-
-def _ocr_recipe_signal_count(ocr_text: str) -> int:
-  if not ocr_text:
-    return 0
-  text = ocr_text.lower()
-  signals = [
-    "ingredients",
-    "ingredient",
-    "method",
-    "directions",
-    "instructions",
-    "recipe",
-    "cup",
-    "cups",
-    "tbsp",
-    "tsp",
-    "gram",
-    "grams",
-    "ml",
-    "kg",
-  ]
-  return sum(1 for token in signals if token in text)
-
-
-def _is_transcript_line_noise(line: str) -> bool:
-  l = line.strip().lower()
-  if not l:
-    return True
-  normalized = re.sub(r"[^a-z0-9\s]", " ", l)
-  normalized = re.sub(r"\s+", " ", normalized).strip()
-  if normalized in {"music", "applause", "laughter", "background music", "song", "lyrics"}:
-    return True
-  noise_tokens = [
-    "official audio",
-    "original sound",
-    "la la la",
-    "oh oh",
-    "baby",
-    "yeah",
-    "uh huh",
-    "mm hmm",
-    "na na",
-    "dj",
-  ]
-  return any(tok in normalized for tok in noise_tokens)
 
 
 def _parse_json_from_model_response(content: str) -> dict[str, Any]:
@@ -592,6 +499,13 @@ def _recipe_to_structured_text(recipe: dict[str, Any]) -> str:
 
 def _mark_failed(job_id: int, reel_id: int, error_text: str) -> None:
   safe_error = _trim_error(error_text)
+  
+  # Check if this is an Instagram blocking error (non-retryable)
+  is_blocked = _is_instagram_blocked_error(safe_error)
+  enhanced_error = safe_error
+  if is_blocked:
+    enhanced_error = f"{safe_error}\n\nNote: Instagram is blocking this reel. The account may be restricted, or the reel may be unavailable/private."
+  
   attempts = 1
   try:
     job = supabase.table("reel_jobs").select("attempt_count").eq("id", job_id).single().execute()
@@ -599,12 +513,13 @@ def _mark_failed(job_id: int, reel_id: int, error_text: str) -> None:
   except Exception as lookup_error:
     print(f"[worker] Failed to read attempt_count for job {job_id}: {lookup_error}")
 
-  retryable = attempts < MAX_RETRIES
+  # If blocked by Instagram or max retries reached, mark as failed permanently
+  retryable = (not is_blocked) and (attempts < MAX_RETRIES)
 
   try:
     supabase.table("reel_jobs").update({
       "status": "queued" if retryable else "failed",
-      "last_error": safe_error,
+      "last_error": enhanced_error,
     }).eq("id", job_id).execute()
   except Exception as job_update_error:
     print(f"[worker] Failed to update reel_jobs for job {job_id}: {job_update_error}")
@@ -612,7 +527,7 @@ def _mark_failed(job_id: int, reel_id: int, error_text: str) -> None:
   try:
     supabase.table("reels").update({
       "status": "queued" if retryable else "failed",
-      "processing_error": safe_error,
+      "processing_error": enhanced_error,
     }).eq("id", reel_id).execute()
   except Exception as reel_update_error:
     print(f"[worker] Failed to update reels for reel {reel_id}: {reel_update_error}")
@@ -682,6 +597,47 @@ def _claim_next_job() -> dict[str, Any] | None:
   return None
 
 
+def _recover_stale_processing_jobs() -> int:
+  if STALE_PROCESSING_SECONDS <= 0:
+    return 0
+
+  stale_iso = time.strftime(
+    "%Y-%m-%dT%H:%M:%SZ",
+    time.gmtime(time.time() - STALE_PROCESSING_SECONDS),
+  )
+  recovered = 0
+
+  try:
+    stale_jobs = supabase.table("reel_jobs") \
+      .select("id, reel_id") \
+      .eq("status", "processing") \
+      .lt("updated_at", stale_iso) \
+      .limit(50) \
+      .execute()
+
+    for row in stale_jobs.data or []:
+      job_id = int(row["id"])
+      reel_id = int(row["reel_id"])
+
+      supabase.table("reel_jobs").update({
+        "status": "queued",
+        "last_error": (
+          "Recovered stale processing job automatically. "
+          "Previous worker run likely timed out or crashed."
+        ),
+      }).eq("id", job_id).eq("status", "processing").execute()
+
+      supabase.table("reels").update({
+        "status": "queued",
+      }).eq("id", reel_id).eq("status", "processing").execute()
+
+      recovered += 1
+  except Exception as recover_error:
+    print(f"[worker] stale recovery warning: {recover_error}")
+
+  return recovered
+
+
 def _oembed_caption(url: str) -> str:
   try:
     encoded = quote(url, safe="")
@@ -694,7 +650,31 @@ def _oembed_caption(url: str) -> str:
     return ""
 
 
+def _is_instagram_blocked_error(error_text: str) -> bool:
+  """Detect if error is due to Instagram blocking the request."""
+  error_lower = (error_text or "").lower()
+  blocked_indicators = [
+    "403",
+    "401",
+    "429",
+    "access denied",
+    "forbidden",
+    "instagram",
+    "blocked",
+    "not available",
+    "no such file",
+    "getting post metadata",
+    "http error 403",
+    "http error 429",
+  ]
+  return any(indicator in error_lower for indicator in blocked_indicators)
+
+
 def _process_one_job() -> dict[str, Any]:
+  recovered = _recover_stale_processing_jobs()
+  if recovered > 0:
+    print(f"[worker] recovered {recovered} stale processing job(s)")
+
   try:
     claimed_job = _claim_next_job()
   except Exception as claim_error:
@@ -724,37 +704,19 @@ def _process_one_job() -> dict[str, Any]:
     with tempfile.TemporaryDirectory() as temp_dir:
       captions = _load_caption_text(temp_dir, reel_url)
       ocr_text = ""
-      transcript = ""
-      ocr_signal_count = 0
-      transcript_filtered = ""
 
       if OCR_ENABLED:
         try:
           ocr_text = _extract_ocr_text(temp_dir, reel_url)
-          ocr_signal_count = _ocr_recipe_signal_count(ocr_text)
         except Exception as ocr_error:
           print(f"[worker] OCR extraction failed for reel {reel_id}: {ocr_error}")
 
-      should_transcribe_audio = FORCE_AUDIO_TRANSCRIBE or not captions
-      if PRIORITIZE_OCR_OVER_AUDIO and ocr_signal_count >= OCR_RECIPE_SIGNAL_THRESHOLD and not FORCE_AUDIO_TRANSCRIBE:
-        should_transcribe_audio = False
-
-      if should_transcribe_audio:
-        try:
-          audio_path = _download_audio(temp_dir, reel_url)
-          transcript = _transcribe_audio(audio_path)
-          transcript_filtered = "\n".join(
-            line for line in transcript.splitlines() if not _is_transcript_line_noise(line)
-          ).strip()
-        except Exception as audio_error:
-          print(f"[worker] Audio extraction failed for reel {reel_id}: {audio_error}")
-
-      effective_transcript = transcript_filtered or transcript
-      combined = _merge_text(_merge_text(captions, ocr_text), effective_transcript)
+      # Keep extraction focused on the original non-audio path: captions + OCR + oEmbed fallback.
+      combined = _merge_text(captions, ocr_text)
       if not combined:
         combined = _oembed_caption(reel_url)
       if not combined:
-        raise RuntimeError("No captions or transcribable speech found")
+        raise RuntimeError("No captions or OCR text found")
 
       try:
         recipe = _extract_recipe(combined)
@@ -769,7 +731,7 @@ def _process_one_job() -> dict[str, Any]:
         "title": recipe.get("dish_name") or "Untitled Recipe",
         "content_type": "Recipe",
         "structured_text": structured_text,
-        "raw_transcript": effective_transcript,
+        "raw_transcript": captions,
         "raw_ocr": ocr_text,
         "source_transcript": combined,
         "recipe_json": recipe,
@@ -842,15 +804,14 @@ def diagnostics(authorization: str | None = Header(default=None)) -> dict[str, A
     "has_groq_key": bool(GROQ_API_KEY),
     "max_retries": MAX_RETRIES,
     "max_duration_seconds": MAX_DURATION_SECONDS,
-    "whisper_model": WHISPER_MODEL_SIZE,
+    "download_timeout_seconds": DOWNLOAD_TIMEOUT_SECONDS,
+    "info_timeout_seconds": INFO_TIMEOUT_SECONDS,
+    "stale_processing_seconds": STALE_PROCESSING_SECONDS,
     "groq_model": GROQ_MODEL,
     "ocr_enabled": OCR_ENABLED,
     "ocr_frame_interval_seconds": OCR_FRAME_INTERVAL_SECONDS,
     "ocr_max_frames": OCR_MAX_FRAMES,
     "ocr_lang": OCR_LANG,
-    "ocr_recipe_signal_threshold": OCR_RECIPE_SIGNAL_THRESHOLD,
-    "force_audio_transcribe": FORCE_AUDIO_TRANSCRIBE,
-    "prioritize_ocr_over_audio": PRIORITIZE_OCR_OVER_AUDIO,
     "has_tesseract_cmd_override": bool(TESSERACT_CMD),
     "yt_dlp_cookies_file": YTDLP_COOKIES_FILE or None,
     "auto_poll_enabled": AUTO_POLL_ENABLED,

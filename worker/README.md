@@ -4,9 +4,8 @@ This service processes queued Instagram reel jobs:
 1. Claims one queued job atomically from Supabase.
 2. Pulls captions with `yt-dlp`.
 3. Extracts on-screen text via OCR from sampled video frames.
-4. Falls back to audio transcription with `ffmpeg` + `faster-whisper`.
-5. Combines captions + OCR + transcript, then extracts structured recipe JSON.
-6. Saves `recipe_json`, `source_transcript`, and `structured_text` back to `reels`.
+4. Combines captions + OCR text, then extracts structured recipe JSON.
+5. Saves `recipe_json`, `source_transcript`, and `structured_text` back to `reels`.
 
 ## Prerequisites
 
@@ -69,7 +68,58 @@ Important:
 - `OCR_ENABLED=true` enables extraction of on-screen recipe text from video frames.
 - `OCR_FRAME_INTERVAL_SECONDS` controls frame sampling rate.
 - `OCR_MAX_FRAMES` limits processing cost per reel.
-- `OCR_RECIPE_SIGNAL_THRESHOLD` controls how much recipe-like OCR text is needed before audio can be skipped.
-- `FORCE_AUDIO_TRANSCRIBE=true` runs audio transcription even when captions exist.
-- `PRIORITIZE_OCR_OVER_AUDIO=true` skips audio transcription when OCR strongly indicates recipe content.
 - If `GROQ_API_KEY` is missing, the worker falls back to a local heuristic parser for recipe structuring.
+
+## Troubleshooting
+
+### Reel processing hangs or takes too long
+**Symptoms**: Reel stays in "processing" status indefinitely or for hours.
+
+**Solution**: Ensure these timeout environment variables are set in `.env`:
+```env
+DOWNLOAD_TIMEOUT_SECONDS=120     # Timeout for yt-dlp/ffmpeg operations
+INFO_TIMEOUT_SECONDS=30          # Timeout for metadata extraction
+MAX_DURATION_SECONDS=180         # Max reel duration allowed
+```
+
+If a reel times out, it will fail with an error like:
+- `Command timeout: yt-dlp exceeded 120s timeout. Network issue or service blocked access.`
+
+### Instagram blocks reel downloads
+**Symptoms**: Error message includes "403 Forbidden", "401 Unauthorized", or "Instagram is blocking"
+
+**Causes**:
+- Instagram actively blocks automated scraping from `yt-dlp`
+- The account or IP may be rate-limited or banned
+- The reel may be private or from a restricted account
+
+**Solutions**:
+1. Use Instagram cookies to improve success rates:
+   - Export `cookies.txt` from your browser
+   - Set `YTDLP_COOKIES_FILE=/path/to/cookies.txt` in `.env`
+
+2. Enable RapidAPI scraper (alternative method):
+   - Sign up at https://rapidapi.com/Datapark6/api/instagram-downloader-v2-scraper-reels-igtv-posts-stories
+   - Set `RAPID_API_KEY=your_key` in `.env`
+   - This is used by the Supabase Edge Function `extract-reel`
+
+3. Check Instagram's rate limits:
+   - Wait 1-24 hours before retrying if rate-limited
+   - Reels from blocked accounts may never be accessible
+
+### OCR extraction is slow
+**Solution**: Reduce processing load:
+- `OCR_ENABLED=false` to skip OCR extraction
+- `OCR_MAX_FRAMES=4` to sample fewer frames (default 8)
+
+### Worker not processing jobs
+**Check**:
+```bash
+curl http://localhost:8000/worker/diagnostics -H "Authorization: Bearer YOUR_WORKER_SECRET"
+```
+
+Verify:
+- `"dependencies": {"yt-dlp": true, "ffmpeg": true}` - binaries installed?
+- `"has_supabase_url": true` and `"has_supabase_key": true` - env vars set?
+- `"auto_poll_started": true` - worker polling enabled?
+- Check logs for error messages about API calls or database access

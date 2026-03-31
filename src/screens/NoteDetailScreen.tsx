@@ -18,6 +18,8 @@ import { theme } from '../theme';
 
 export const NoteDetailScreen = ({ route, navigation }: any) => {
   const PROCESSING_TIMEOUT_MS = 3 * 60 * 1000;
+  const ACTIVE_POLL_MS = 4000;
+  const STALE_POLL_MS = 10000;
   const { noteId } = route.params;
   const [note, setNote] = useState<Note | null>(null);
   const [isEditing, setIsEditing] = useState(false);
@@ -61,8 +63,8 @@ export const NoteDetailScreen = ({ route, navigation }: any) => {
       const updatedAt = new Date(loadedNote.updated_at || loadedNote.created_at).getTime();
       const isStale = Date.now() - updatedAt > PROCESSING_TIMEOUT_MS;
 
-      if (isProcessing && !isStale) {
-        timer = setTimeout(() => refreshNote(false), 4000);
+      if (isProcessing) {
+        timer = setTimeout(() => refreshNote(false), isStale ? STALE_POLL_MS : ACTIVE_POLL_MS);
       }
     };
 
@@ -72,7 +74,7 @@ export const NoteDetailScreen = ({ route, navigation }: any) => {
       mounted = false;
       if (timer) clearTimeout(timer);
     };
-  }, [noteId, navigation, isEditing, fadeAnim]);
+  }, [noteId, navigation, isEditing, fadeAnim, ACTIVE_POLL_MS, STALE_POLL_MS]);
 
   const handleSave = async () => {
     if (!note) return;
