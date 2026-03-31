@@ -14,6 +14,14 @@ web-build/
 .env
 .env.local
 .env*.local
+*.env
+**/.env
+**/.env.local
+**/.env*.local
+
+# Keep examples, ignore real runtime envs
+!*.env.example
+!**/*.env.example
 
 # Build artifacts
 *.log
@@ -31,9 +39,9 @@ Thumbs.db
 *.swp
 *.swo
 
-# Native builds (generated during cloud build)
-ios/
-android/
+# Backend and worker code (not needed for app binary)
+supabase/
+worker/
 
 # Test coverage
 coverage/
@@ -42,3 +50,14 @@ coverage/
 *.tmp
 *.temp
 .cache/
+
+# Python artifacts (worker)
+__pycache__/
+*.pyc
+
+# Secrets and key material
+*.pem
+*.key
+*.p8
+*.p12
+*.jks
