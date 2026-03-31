@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, FlatList, Alert, Animated, ActivityIndicator, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, FlatList, Alert, Animated, ActivityIndicator, TouchableOpacity, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { NoteCard } from '../components/NoteCard';
@@ -7,7 +7,7 @@ import { SearchBar } from '../components/SearchBar';
 import { Button } from '../components/Button';
 import { ScreenBackdrop } from '../components/ScreenBackdrop';
 
-import { getNotesPage, searchNotesPage, deleteNote } from '../services/supabase';
+import { getNotesPage, searchNotesPage, deleteNote, syncNotesFromServer } from '../services/supabase';
 import { Note } from '../types';
 import { theme } from '../theme';
 
@@ -79,26 +79,62 @@ export const HomeScreen = ({ navigation }: any) => {
   );
 
   const handleDeleteNote = (id: number) => {
+    const runDelete = async () => {
+      const success = await deleteNote(id);
+      if (success) {
+        scrollToTop(false);
+        setShowScrollTop(false);
+        setCurrentPage(0);
+        setHasMore(true);
+        setNotes([]);
+        loadNotes(true);
+      } else {
+        Alert.alert('Error', 'Failed to delete note');
+      }
+    };
+
+    if (Platform.OS === 'web') {
+      const confirmed = globalThis.confirm('Are you sure you want to delete this note?');
+      if (confirmed) {
+        runDelete();
+      }
+      return;
+    }
+
     Alert.alert('Delete Note', 'Are you sure you want to delete this note?', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete',
         style: 'destructive',
-        onPress: async () => {
-          const success = await deleteNote(id);
-          if (success) {
-            scrollToTop(false);
-            setShowScrollTop(false);
-            setCurrentPage(0);
-            setHasMore(true);
-            setNotes([]);
-            loadNotes(true);
-          } else {
-            Alert.alert('Error', 'Failed to delete note');
-          }
-        },
+        onPress: runDelete,
       },
     ]);
+  };
+
+  const handleRefresh = async () => {
+    if (loading || loadingMore) return;
+
+    setLoading(true);
+    try {
+      await syncNotesFromServer();
+
+      let batch: { notes: Note[]; hasMore: boolean };
+      if (searchQuery.trim()) {
+        batch = await searchNotesPage(searchQuery.trim(), 0, PAGE_SIZE);
+      } else {
+        batch = await getNotesPage(0, PAGE_SIZE);
+      }
+
+      scrollToTop(false);
+      setShowScrollTop(false);
+      setCurrentPage(1);
+      setHasMore(batch.hasMore);
+      setNotes(batch.notes);
+    } catch (error) {
+      console.error('Error refreshing notes:', error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const noteCount = notes.length;
@@ -130,6 +166,9 @@ export const HomeScreen = ({ navigation }: any) => {
           style={styles.list}
           contentContainerStyle={isListEmpty ? styles.listContentEmpty : styles.listContent}
           showsVerticalScrollIndicator
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          nestedScrollEnabled
           scrollEnabled
           onScroll={(event) => {
             const y = event.nativeEvent.contentOffset.y;
@@ -176,7 +215,16 @@ export const HomeScreen = ({ navigation }: any) => {
 
               <View style={styles.sectionHeader}>
                 <Text style={styles.sectionTitle}>Library</Text>
-                <Text style={styles.sectionMeta}>{loading ? 'Refreshing' : `${noteCount} total`}</Text>
+                <View style={styles.sectionActions}>
+                  <Text style={styles.sectionMeta}>{loading ? 'Refreshing' : `${noteCount} total`}</Text>
+                  <Button
+                    title={loading ? 'Refreshing...' : 'Refresh'}
+                    onPress={handleRefresh}
+                    variant="secondary"
+                    style={styles.refreshButton}
+                    loading={loading}
+                  />
+                </View>
               </View>
             </View>
           }
@@ -240,7 +288,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: theme.spacing.lg,
     paddingTop: theme.spacing.xs,
     paddingBottom: 120,
-    flexGrow: 1,
   },
   listContentEmpty: {
     paddingHorizontal: theme.spacing.lg,
@@ -332,6 +379,15 @@ const styles = StyleSheet.create({
   sectionMeta: {
     ...theme.typography.caption,
     color: theme.colors.textSubtle,
+  },
+  sectionActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.spacing.sm,
+  },
+  refreshButton: {
+    minHeight: 34,
+    paddingVertical: 6,
   },
   emptyState: {
     flex: 1,

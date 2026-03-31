@@ -12,6 +12,11 @@ interface EnqueueRequest {
   retry?: boolean
 }
 
+interface AuthenticatedUserResult {
+  userId: string | null
+  authError: string | null
+}
+
 const INSTAGRAM_PATTERNS = [
   /instagram\.com\/reel\/[A-Za-z0-9_-]+/i,
   /instagram\.com\/p\/[A-Za-z0-9_-]+/i,
@@ -46,9 +51,18 @@ async function triggerWorkerRunOnce(): Promise<void> {
   }
 }
 
-async function getAuthenticatedUserId(req: Request, supabaseUrl: string, anonKey: string): Promise<string | null> {
+function jsonResponse(body: Record<string, unknown>, status = 200): Response {
+  return new Response(
+    JSON.stringify(body),
+    { status, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+  )
+}
+
+async function getAuthenticatedUser(req: Request, supabaseUrl: string, anonKey: string): Promise<AuthenticatedUserResult> {
   const authHeader = req.headers.get("Authorization")
-  if (!authHeader) return null
+  if (!authHeader) {
+    return { userId: null, authError: "Missing Authorization header" }
+  }
 
   const userClient = createClient(supabaseUrl, anonKey, {
     global: {
@@ -58,10 +72,10 @@ async function getAuthenticatedUserId(req: Request, supabaseUrl: string, anonKey
 
   const { data, error } = await userClient.auth.getUser()
   if (error || !data?.user?.id) {
-    return null
+    return { userId: null, authError: error?.message || "Invalid JWT" }
   }
 
-  return data.user.id
+  return { userId: data.user.id, authError: null }
 }
 
 serve(async (req) => {
@@ -70,25 +84,26 @@ serve(async (req) => {
   }
 
   try {
-    const { url, reelId, retry }: EnqueueRequest = await req.json()
+    let payload: EnqueueRequest
+    try {
+      payload = await req.json()
+    } catch (_jsonError) {
+      return jsonResponse({ error: "Invalid JSON body" }, 400)
+    }
+
+    const { url, reelId, retry } = payload
     const supabaseUrl = Deno.env.get("SUPABASE_URL")
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY")
     const dbKey = serviceRoleKey || anonKey
 
     if (!supabaseUrl || !dbKey || !anonKey) {
-      return new Response(
-        JSON.stringify({ error: "Missing Supabase runtime configuration (SUPABASE_URL / SUPABASE_ANON_KEY / key)" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      )
+      return jsonResponse({ error: "Missing Supabase runtime configuration (SUPABASE_URL / SUPABASE_ANON_KEY / key)" }, 500)
     }
 
-    const userId = await getAuthenticatedUserId(req, supabaseUrl, anonKey)
+    const { userId, authError } = await getAuthenticatedUser(req, supabaseUrl, anonKey)
     if (!userId) {
-      return new Response(
-        JSON.stringify({ error: "Unauthorized" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      )
+      return jsonResponse({ error: authError || "Invalid JWT" }, 401)
     }
 
     const supabase = createClient(supabaseUrl, dbKey)
@@ -102,10 +117,7 @@ serve(async (req) => {
         .single()
 
       if (reelError || !reel) {
-        return new Response(
-          JSON.stringify({ error: "Reel note not found" }),
-          { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        )
+        return jsonResponse({ error: "Reel note not found" }, 404)
       }
 
       const { error: updateError } = await supabase
@@ -115,10 +127,7 @@ serve(async (req) => {
         .eq("owner_id", userId)
 
       if (updateError) {
-        return new Response(
-          JSON.stringify({ error: updateError.message }),
-          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        )
+        return jsonResponse({ error: updateError.message }, 500)
       }
 
       const { data: existingActiveJob, error: existingJobError } = await supabase
@@ -131,18 +140,12 @@ serve(async (req) => {
         .maybeSingle()
 
       if (existingJobError) {
-        return new Response(
-          JSON.stringify({ error: existingJobError.message }),
-          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        )
+        return jsonResponse({ error: existingJobError.message }, 500)
       }
 
       if (existingActiveJob) {
         await triggerWorkerRunOnce()
-        return new Response(
-          JSON.stringify({ reelId, status: "queued" }),
-          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        )
+        return jsonResponse({ reelId, status: "queued" }, 200)
       }
 
       const { error: jobError } = await supabase
@@ -150,25 +153,16 @@ serve(async (req) => {
         .insert({ reel_id: reelId, status: "queued", attempt_count: 0 })
 
       if (jobError) {
-        return new Response(
-          JSON.stringify({ error: jobError.message }),
-          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        )
+        return jsonResponse({ error: jobError.message }, 500)
       }
 
       await triggerWorkerRunOnce()
 
-      return new Response(
-        JSON.stringify({ reelId, status: "queued" }),
-        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      )
+      return jsonResponse({ reelId, status: "queued" }, 200)
     }
 
     if (!url || !isValidInstagramUrl(url)) {
-      return new Response(
-        JSON.stringify({ error: "Please provide a valid public Instagram reel/post URL" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      )
+      return jsonResponse({ error: "Please provide a valid public Instagram reel/post URL" }, 400)
     }
 
     const { data: newReel, error: reelInsertError } = await supabase
@@ -185,10 +179,7 @@ serve(async (req) => {
       .single()
 
     if (reelInsertError || !newReel) {
-      return new Response(
-        JSON.stringify({ error: reelInsertError?.message || "Failed to create reel note" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      )
+      return jsonResponse({ error: reelInsertError?.message || "Failed to create reel note" }, 500)
     }
 
     const { error: jobError } = await supabase
@@ -197,22 +188,13 @@ serve(async (req) => {
 
     if (jobError) {
       await supabase.from("reels").delete().eq("id", newReel.id)
-      return new Response(
-        JSON.stringify({ error: jobError.message }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      )
+      return jsonResponse({ error: jobError.message }, 500)
     }
 
     await triggerWorkerRunOnce()
 
-    return new Response(
-      JSON.stringify({ reelId: newReel.id, status: newReel.status }),
-      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    )
+    return jsonResponse({ reelId: newReel.id, status: newReel.status }, 200)
   } catch (error) {
-    return new Response(
-      JSON.stringify({ error: error.message || "Failed to enqueue reel" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    )
+    return jsonResponse({ error: error.message || "Failed to enqueue reel" }, 500)
   }
 })

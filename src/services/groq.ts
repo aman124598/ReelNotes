@@ -2,6 +2,18 @@ import { normalizeContentType, normalizeText } from '../utils/text';
 
 const GROQ_API_KEY = process.env.EXPO_PUBLIC_GROQ_API_KEY || '';
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
+const GROQ_TIMEOUT_MS = 45000;
+
+const fetchWithTimeout = async (url: string, init: RequestInit, timeoutMs: number): Promise<Response> => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+};
 
 export const formatWithGroq = async (transcript: string): Promise<{ title: string; contentType: string; structuredText: string }> => {
   try {
@@ -25,7 +37,7 @@ Respond ONLY with valid JSON in this format:
   "structuredText": "Formatted text with sections and emojis"
 }`;
 
-    const response = await fetch(GROQ_API_URL, {
+    const response = await fetchWithTimeout(GROQ_API_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -40,7 +52,7 @@ Respond ONLY with valid JSON in this format:
         temperature: 0.7,
         max_tokens: 1024,
       }),
-    });
+    }, GROQ_TIMEOUT_MS);
 
     if (!response.ok) {
       throw new Error(`Groq API error: ${response.status}`);
@@ -68,6 +80,9 @@ Respond ONLY with valid JSON in this format:
       structuredText,
     };
   } catch (err: any) {
+    if (err?.name === 'AbortError') {
+      console.error(`Groq formatting timed out after ${Math.round(GROQ_TIMEOUT_MS / 1000)}s`);
+    }
     console.error('Groq formatting error:', err);
     // Fallback formatting
     return {

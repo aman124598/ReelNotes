@@ -55,7 +55,14 @@ export const NoteCard: React.FC<NoteCardProps> = ({ note, onPress, onDelete }) =
               {note.title || 'Untitled Note'}
             </Text>
           </View>
-          <TouchableOpacity onPress={onDelete} style={styles.deleteButton}>
+          <TouchableOpacity
+            onPress={(event) => {
+              // Prevent card navigation when tapping delete on web.
+              (event as any)?.stopPropagation?.();
+              onDelete();
+            }}
+            style={styles.deleteButton}
+          >
             <Text style={styles.deleteText}>✕</Text>
           </TouchableOpacity>
         </View>

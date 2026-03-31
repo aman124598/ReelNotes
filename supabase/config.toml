@@ -1,0 +1,5 @@
+[functions.enqueue-reel]
+verify_jwt = false
+
+[functions.get-reel-status]
+verify_jwt = false
